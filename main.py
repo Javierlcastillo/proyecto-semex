@@ -1,18 +1,11 @@
-import math
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.animation import FuncAnimation
 import agentpy as ap
-from route import Route, Point
+from route import Route
 
-# NEW: import generated routes (created by svg_to_routes.py)
-from generated_routes import load_routes
-
-def build_example_routes() -> list[Route]:
-    # load generated ROUTE_POLYLINES -> Route objects
-    # samples_per_segment controls internal polyline resolution (keep low e.g. 2 for straight segments)
-    return load_routes(samples_per_segment=2)
+from defined_routes import routes
 
 def _draw_arrow_for_segment(ax: Axes, p0: np.ndarray, p1: np.ndarray, color: str):
     dx, dy = (p1 - p0)
@@ -42,7 +35,7 @@ class RouteDemoModel(ap.Model):
     so you can call draw_routes(ax, routes) inside your AgentPy visualization.
     """
     def setup(self):
-        self.routes = build_example_routes()
+        self.routes = routes
         self.n_agents = 30
         # assign each agent a random route
         self.agent_route = np.random.choice(len(self.routes), size=self.n_agents)
@@ -62,14 +55,13 @@ class RouteDemoModel(ap.Model):
         self.pos = np.vstack([ self.routes[self.agent_route[i]].pos_at(self.s[i]) for i in range(self.n_agents) ])
 
 def run_matplotlib_demo():
-    routes = build_example_routes()
     model = RouteDemoModel({'steps': 200})
     model.setup()
 
     fig, ax = plt.subplots(figsize=(8,8))
     ax.set_aspect('equal')
-    ax.set_xlim(-100, 500)
-    ax.set_ylim(-100, 500)
+    ax.set_xlim(100, 700)
+    ax.set_ylim(0, 600)
     draw_routes(ax, routes)
 
     scat = ax.scatter([], [], s=30, c='k')

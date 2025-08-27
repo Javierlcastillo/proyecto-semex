@@ -1,12 +1,14 @@
 import numpy as np
+import numpy.typing as npt
 from dataclasses import dataclass, field
 from typing import List, Tuple, Callable, Sequence, Optional
 import math
+import matplotlib.pyplot as plt
 
 Point = Tuple[float, float]
-ParamFunc = Callable[[float], Point] # t in [0, 1] -> (x, y)
+ParamFunc = Callable[[np.float64], Point] # t in [0, 1] -> (x, y)
 
-def _calculate_cumulative_lengths(points: np.ndarray) -> np.ndarray:
+def _calculate_cumulative_lengths(points: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
     """
     Compute the cumulative lengths of a series of 2D points.
     """
@@ -15,7 +17,7 @@ def _calculate_cumulative_lengths(points: np.ndarray) -> np.ndarray:
     seg = np.linalg.norm(np.diff(points, axis=0), axis=1)
     return np.concatenate(([0.0], np.cumsum(seg)))
 
-def _interpolate_points(points: np.ndarray, s_vals: np.ndarray, cumlen: np.ndarray) -> np.ndarray:
+def _interpolate_points(points: npt.NDArray[np.float64], s_vals: npt.NDArray[np.float64], cumlen: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
     """
     Interpolate points along the route at specified arc lengths.
     """
@@ -37,8 +39,8 @@ class Route:
     A route composed from one or more parametric segments.
     Internally we build a high-resolution polyline and compute cumulative length; all public sampling is done by arc-length.
     """
-    segments: List[ParamFunc]
-    _cumlen: List[float] = field(init=False)
+    segments: Sequence[ParamFunc]
+    _cumlen: npt.NDArray[np.float64] = field(init=False)
     samples_per_segment: int = 600 # Controls arc-length approximation accuracy
     name: str = "Generic"
 
@@ -49,10 +51,10 @@ class Route:
             self.length = 0.0
             return
         
-        pts_list: List[Point] = []
+        pts_list: List[npt.NDArray[np.float64]] = []
         for i, f in enumerate(self.segments):
             t = np.linspace(0.0, 1.0, self.samples_per_segment, endpoint=(i == len(self.segments) - 1))
-            seg_pts = np.asarray([f(tt) for tt in t], dtype=float)
+            seg_pts = np.asarray([f(tt) for tt in t], dtype=np.float64)
             pts_list.append(seg_pts)
         all_pts = np.vstack(pts_list)
 
@@ -70,7 +72,7 @@ class Route:
         p = _interpolate_points(self._points, np.asarray([s], dtype=float), self._cumlen)[0]
         return float(p[0]), float(p[1])
 
-    def sample_even(self, n: int) -> np.ndarray:
+    def sample_even(self, n: int) -> npt.NDArray[np.float64]:
         """Return n points evenly spaced by world-distance along the route."""
         if n <= 0:
             return np.zeros((0, 2), dtype=float)
@@ -132,10 +134,9 @@ class Route:
             # convert each route's piecewise polyline into parametric straight segments
             pts = r._points
             for a, b in zip(pts[:-1], pts[1:]):
-                    def make_line(a: np.ndarray = a, b: np.ndarray = b):
+                    def make_line(a: npt.NDArray[np.float64] = a, b: npt.NDArray[np.float64] = b):
                         def f(t: float) -> Point:
                             return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
                         return f
                     segs.append(make_line())
         return cls(segs, samples_per_segment=(samples_per_segment or 2))
-
