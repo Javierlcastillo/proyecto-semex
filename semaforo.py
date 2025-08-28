@@ -1,26 +1,15 @@
 import agentpy as ap
-import pandas as pd
 
-class Carro(ap.Agent):
+class Semaforo(ap.Agent):
     def setup(self, **kwargs):
-        pos_inicial = { 'mov1': (x, y, z),
-                        'mov2': (x, y, z), 
-                        'mov3': (x, y, z), 
-                        'mov4': (x, y, z),
-                        'mov5': (x, y, z),
-                        'mov6': (x, y, z),
-                        'mov7': (x, y, z),
-                        'mov8': (x, y, z),
-                        'mov9': (x, y, z),
-                        'mov10': (x, y, z),
-                        'mov11': (x, y, z),
-                        'mov12': (x, y, z),
-                        'mov13': (x, y, z),
-                        'mov14': (x, y, z)
-                    }
-
-        return super().setup(**kwargs)
+        """
+        Inicializa el agente semáforo con parámetros opcionales usando kwargs.
+        """
+        self.estado = kwargs.get("estado", "rojo")
+        self.tiempo_rojo = kwargs.get("tiempo_rojo", 30)
+        self.tiempo_verde = kwargs.get("tiempo_verde", 30)
+        self.tiempo_amarillo = kwargs.get("tiempo_amarillo", 5)
+        self.temporizador = self.tiempo_rojo
+        # Llama a setup del padre si es necesario
+        super().setup(**kwargs)
     
-
-    
-kwargs  = { 'movimiento': None, 'tipo': None, }
