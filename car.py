@@ -1,56 +1,86 @@
 import agentpy as ap
+from route import Route, Point
+import numpy as np
 
 class Car(ap.Agent):
-    """Simple car that follows a Route by advancing its arc-length s each step.
+    route: Route
+    position: Point
+    ds: float
 
-    Parameters (from model.p):
-    - dt: time step in seconds
-    - v_init: initial speed (world units/s)
-    - v_max: hard speed cap (world units/s)
-    - min_gap: desired minimum front gap if following a leader on same route
-    - acc: simple acceleration when below desired speed
-    - dec: simple deceleration when too close to leader or at route end
-    """
+    maxRateOfAceleration: float
+    width: float
+    height: float
+    is_colliding: bool
 
-    def setup(self, route: Route, s0: float = 0.0, v0: Optional[float] = None, color: str = "k"):
+    def setup(self, route: Route): # pyright: ignore[reportIncompatibleMethodOverride]
         self.route = route
-        self.s = float(s0)
-        self.v = float(v0 if v0 is not None else self.p.v_init)
-        self.color = color  # used for plotting
-        self.leader: Optional[Car] = None  # car ahead on same route, if any
 
-    # Position helpers
-    @property
-    def xy(self) -> Tuple[float, float]:
-        return self.route.pos_at(self.s)
+        self.s = 0.0
+        self.position = self.route.pos_at(self.s)
+
+        self.maxRateOfAceleration = np.random.uniform(0.8, 1.2)
+
+        self.ds = 1  # Amount of S that changes in a step
+
+        self.width = 10
+        self.height = 20
+        self.is_colliding = False
 
     def step(self):
-        dt = float(self.p.dt)
-        v_max = float(min(self.p.v_max, self.route.speed_limit or self.p.v_max))
-        a = float(self.p.acc)
-        d = float(self.p.dec)
-        min_gap = float(self.p.min_gap)
+        self.s += self.ds
+        self.position = self.route.pos_at(self.s)
 
-        # Very simple car-following: if leader exists on same route, keep gap
-        target_v = v_max
-        if self.leader is not None and self.leader.route is self.route:
-            gap = max(0.0, self.leader.s - self.s)
-            # If too close, reduce target speed proportional to gap
-            if gap < min_gap:
-                target_v = min(target_v, max(0.0, (gap / max(min_gap, 1e-3)) * v_max))
+    def accelerate(self, rate: float):
+        if np.abs(rate) < np.abs(self.maxRateOfAceleration):
+            self.ds *= rate
 
-        # Approach end of route
-        dist_to_end = max(0.0, self.route.length - self.s)
-        if dist_to_end < max(self.v * dt, 1e-6):
-            # Brake when close to the end unless the model decides to transfer to next route
-            target_v = 0.0
+    # --- Collision helpers on the agent ---
 
-        # Accelerate or decelerate to target_v
-        if self.v < target_v:
-            self.v = min(target_v, self.v + a * dt)
-        else:
-            self.v = max(target_v, self.v - d * dt)
+    def heading(self) -> float:
+        p0 = self.route.pos_at(self.s)
+        p1 = self.route.pos_at(self.s + self.ds)
+        return float(np.arctan2(p1[1] - p0[1], p1[0] - p0[0]))  # radians
 
-        # Advance along the route
-        self.s = min(self.route.length, self.s + self.v * dt)
+    def corners(self) -> np.ndarray:
+        # Oriented rectangle corners (counter-clockwise) in world coords
+        x, y = self.position
+        w, h = self.width, self.height
+        a = self.heading()
+        c, s = np.cos(a), np.sin(a)
+        hw, hh = w/2.0, h/2.0
+        local = np.array([
+            [-hw, -hh],
+            [ hw, -hh],
+            [ hw,  hh],
+            [-hw,  hh],
+        ])
+        R = np.array([[c, -s],[s, c]])
+        return local @ R.T + np.array([x, y])
 
+    @staticmethod
+    def _sat_overlap(A: np.ndarray, B: np.ndarray) -> bool:
+        # A and B: (4,2) arrays of rectangle corners
+        def axes_from(poly: np.ndarray):
+            edges = np.roll(poly, -1, axis=0) - poly
+            axes = []
+            for e in edges[:2]:  # two unique edge directions for a rectangle
+                n = np.array([-e[1], e[0]])
+                ln = np.linalg.norm(n)
+                if ln > 1e-9:
+                    axes.append(n / ln)
+            return axes
+
+        for axis in axes_from(A) + axes_from(B):
+            projA = A @ axis
+            projB = B @ axis
+            if projA.max() < projB.min() or projB.max() < projA.min():
+                return False
+        return True
+
+    def collides_with(self, other: "Car") -> bool:
+        if self is other:
+            return False
+        return self._sat_overlap(self.corners(), other.corners())
+
+    def update_collision(self, cars: list["Car"]) -> None:
+        self.is_colliding = any(self.collides_with(o) for o in cars if o is not self)
