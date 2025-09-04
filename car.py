@@ -1,9 +1,14 @@
 import agentpy as ap
 from route import Route, Point
 import numpy as np
+from matplotlib import patches, transforms, axes, figure
+from typing import Optional
+from traffic_light import TrafficLight, TLConnection, TrafficLightState
 
 class Car(ap.Agent):
     route: Route
+    tlconnections: list[TLConnection]
+
     position: Point
     ds: float
 
@@ -12,8 +17,20 @@ class Car(ap.Agent):
     height: float
     is_colliding: bool
 
-    def setup(self, route: Route): # pyright: ignore[reportIncompatibleMethodOverride]
+    patch: Optional[patches.Rectangle]
+
+    @property
+    def nextTLC(self):
+        nearest: Optional[TLConnection] = None
+
+        for tlc in self.tlconnections:
+            if tlc.route == self.route and self.s < tlc.s and (nearest is None or tlc.s < nearest.s):
+                nearest = tlc
+        return nearest
+
+    def setup(self, route: Route, tlconnections: list[TLConnection]): # pyright: ignore[reportIncompatibleMethodOverride]
         self.route = route
+        self.tlconnections = tlconnections
 
         self.s = 0.0
         self.position = self.route.pos_at(self.s)
@@ -22,13 +39,36 @@ class Car(ap.Agent):
 
         self.ds = 1  # Amount of S that changes in a step
 
-        self.width = 10
-        self.height = 20
+        self.width = 20
+        self.height = 10
         self.is_colliding = False
 
     def step(self):
-        self.s += self.ds
-        self.position = self.route.pos_at(self.s)
+
+        if (self.s == self.nextTLC.s and self.nextTLC.traffic_light.state == TrafficLightState.RED):
+            # do nothing
+            print("whatup")
+        else:
+            self.s += self.ds
+            self.position = self.route.pos_at(self.s)
+
+    def plot(self, ax: axes.Axes):
+        x, y = self.position
+        w, h = self.width, self.height
+
+        if not hasattr(self, "patch") or self.patch is None:
+            self.patch = patches.Rectangle(
+                (x - w/2, y - h/2), w, h,
+                facecolor='black', edgecolor='white', linewidth=1, zorder=2
+            )
+            ax.add_patch(self.patch)  # Add patch to Axes
+        else:
+            self.patch.set_xy((x - w/2, y - h/2))
+
+        angle = self.heading()
+        self.patch.set_transform(
+            transforms.Affine2D().rotate_around(x, y, angle) + ax.transData
+        )        
 
     def accelerate(self, rate: float):
         if np.abs(rate) < np.abs(self.maxRateOfAceleration):

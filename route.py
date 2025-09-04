@@ -3,7 +3,6 @@ import numpy.typing as npt
 from dataclasses import dataclass, field
 from typing import List, Tuple, Callable, Sequence, Optional
 import math
-import matplotlib.pyplot as plt
 
 Point = Tuple[float, float]
 ParamFunc = Callable[[np.float64], Point] # t in [0, 1] -> (x, y)
