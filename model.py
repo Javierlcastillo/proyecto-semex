@@ -21,7 +21,7 @@ class Renderer(ap.Model):
     car_patches: list[patches.Rectangle] = []
 
     def setup(self):
-        self.routes = routes[0:1]
+        self.routes = routes
         self.cars = [
             Car(
                 self, 
@@ -37,8 +37,11 @@ class Renderer(ap.Model):
 
         
         colors = ['red', 'orange', 'green', 'blue', 'purple', 'brown', 'cyan', 'magenta']
-        for i, r in enumerate(self.routes):
-            r.plot(self.ax, color=colors[i % len(colors)])
+        for i, route in enumerate(self.routes):
+            route.plot(self.ax, color=colors[i % len(colors)])
+
+        for tlc in tlconnections:
+            tlc.traffic_light.plot(self.ax)
         
         self.fig.show()
 
