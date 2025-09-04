@@ -3,6 +3,7 @@ import numpy.typing as npt
 from dataclasses import dataclass, field
 from typing import List, Tuple, Callable, Sequence, Optional
 import math
+from matplotlib.axes import Axes
 
 Point = Tuple[float, float]
 ParamFunc = Callable[[np.float64], Point] # t in [0, 1] -> (x, y)
@@ -77,9 +78,13 @@ class Route:
             return np.zeros((0, 2), dtype=float)
         if self.length == 0.0:
             return np.tile(self._points[:1], (n, 1))
-        s = np.linspace(0.0, self.length, n)
+        s = np.linspace(0.0, self.length, n, dtype=np.float64)
         return _interpolate_points(self._points, s, self._cumlen)
     
+    def plot(self, ax: Axes, color: str = 'black'):
+        pts = self.sample_even(400)
+        ax.plot(pts[:,0], pts[:,1], color=color, linewidth=2, zorder=1) # type: ignore
+
     @classmethod
     def from_polyline(cls, points: Sequence[Point], samples_per_segment: int = 2) -> "Route":
         """Construct a route from straight segments (polyline)."""
