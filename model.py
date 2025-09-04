@@ -6,7 +6,6 @@ from matplotlib.axes import Axes
 from matplotlib import patches
 from route import Route
 from car import Car
-from traffic_light import TrafficLight, TLConnection
 
 from defined_routes import routes
 from defined_tlconnections import tlconnections
@@ -22,7 +21,7 @@ class Renderer(ap.Model):
     car_patches: list[patches.Rectangle] = []
 
     def setup(self):
-        self.routes = routes[0:1]
+        self.routes = routes
         self.cars = [
             Car(
                 self, 
@@ -31,16 +30,18 @@ class Renderer(ap.Model):
             ) for r in self.routes
         ]
 
-        self.fig, self.ax = plt.subplots(figsize=(8,8))
+        self.fig, self.ax = plt.subplots(figsize=(8,8), squeeze=True) # type: ignore
         self.ax.set_aspect('equal')
         self.ax.set_xlim(100, 700)
         self.ax.set_ylim(0, 600)
 
+        
         colors = ['red', 'orange', 'green', 'blue', 'purple', 'brown', 'cyan', 'magenta']
+        for i, route in enumerate(self.routes):
+            route.plot(self.ax, color=colors[i % len(colors)])
 
-        for i, r in enumerate(self.routes):
-            pts = r.sample_even(400)
-            self.ax.plot(pts[:,0], pts[:,1], color=colors[i % len(colors)], linewidth=2, zorder=1)
+        for tlc in tlconnections:
+            tlc.traffic_light.plot(self.ax)
         
         self.fig.show()
 
@@ -53,14 +54,8 @@ class Renderer(ap.Model):
         for car in self.cars:
             car.plot(self.ax)
 
-        for c in self.traffic_light_connections:
-            c.traffic_light.plot(self.ax)
-
-        self.fig.canvas.draw_idle()
+        self.fig.canvas.draw_idle() # type: ignore
         self.fig.canvas.flush_events()
-
-    def get_traffic_lights_in_route(self, r: Route) -> list[TLConnection]:
-        return [tlc for tlc in self.traffic_light_connections if tlc.route == r]
 
     def step(self):
         # Advance cars, then repaint them
