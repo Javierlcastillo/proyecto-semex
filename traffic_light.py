@@ -1,6 +1,5 @@
 import enum
 from route import Route
-from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 from matplotlib.patches import Circle
 
@@ -15,6 +14,7 @@ class TrafficLight:
     """
 
     state: TrafficLightState
+    patch: Circle
 
     # The universal location where the traffic light will be rendered for all routes
     x: float
@@ -26,8 +26,11 @@ class TrafficLight:
         self.y = y
 
     def plot(self, ax: Axes):
-        circle = Circle((self.x, self.y), 5, color=self.state.value)
-        ax.add_patch(circle)
+        if not self.patch:
+            self.patch = Circle((self.x, self.y), 10, color=self.state.value.lower(), zorder=2)
+            ax.add_patch(self.patch) 
+        else:
+            self.patch.set_color(self.state.value.lower())
 
 class TLConnection:
     """

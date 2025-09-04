@@ -1,9 +1,9 @@
 import agentpy as ap
 from route import Route, Point
 import numpy as np
-from matplotlib import patches, transforms, axes, figure
-from typing import Optional
-from traffic_light import TrafficLight, TLConnection, TrafficLightState
+from matplotlib import patches, transforms, axes
+from typing import Optional, Any
+from traffic_light import TLConnection
 
 class Car(ap.Agent):
     route: Route
@@ -44,13 +44,9 @@ class Car(ap.Agent):
         self.is_colliding = False
 
     def step(self):
-
-        if (self.s == self.nextTLC.s and self.nextTLC.traffic_light.state == TrafficLightState.RED):
-            # do nothing
-            print("whatup")
-        else:
-            self.s += self.ds
-            self.position = self.route.pos_at(self.s)
+        # Aquí es donde iría lo de Q learning, la toma de decisiones con respecto al entorno/estados
+        self.s += self.ds
+        self.position = self.route.pos_at(self.s)
 
     def plot(self, ax: axes.Axes):
         x, y = self.position
@@ -81,7 +77,7 @@ class Car(ap.Agent):
         p1 = self.route.pos_at(self.s + self.ds)
         return float(np.arctan2(p1[1] - p0[1], p1[0] - p0[0]))  # radians
 
-    def corners(self) -> np.ndarray:
+    def corners(self) -> np.ndarray[Any, Any]:
         # Oriented rectangle corners (counter-clockwise) in world coords
         x, y = self.position
         w, h = self.width, self.height
@@ -98,17 +94,17 @@ class Car(ap.Agent):
         return local @ R.T + np.array([x, y])
 
     @staticmethod
-    def _sat_overlap(A: np.ndarray, B: np.ndarray) -> bool:
+    def _sat_overlap(A: np.ndarray[Any, Any], B: np.ndarray[Any, Any]) -> bool:
         # A and B: (4,2) arrays of rectangle corners
-        def axes_from(poly: np.ndarray):
+        def axes_from(poly: np.ndarray[Any, Any]) -> list[np.ndarray[Any, Any]]:
             edges = np.roll(poly, -1, axis=0) - poly
             axes = []
             for e in edges[:2]:  # two unique edge directions for a rectangle
                 n = np.array([-e[1], e[0]])
                 ln = np.linalg.norm(n)
                 if ln > 1e-9:
-                    axes.append(n / ln)
-            return axes
+                    axes.append(n / ln) # type: ignore
+            return axes # type: ignore
 
         for axis in axes_from(A) + axes_from(B):
             projA = A @ axis
