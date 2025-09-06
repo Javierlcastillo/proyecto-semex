@@ -10,6 +10,8 @@ from car import Car
 from defined_routes import routes
 from defined_tlconnections import tlconnections
 
+from network_manager import NetManager
+
 class Renderer(ap.Model):
     """
     Minimal model that keeps arrays of agents moving along assigned routes.
@@ -20,8 +22,14 @@ class Renderer(ap.Model):
     routes: list[Route]
     car_patches: list[patches.Rectangle] = []
 
+    net: NetManager
+
     def setup(self):
+        self.net = NetManager()
+        self.net.start()
+
         self.routes = routes
+        self.tlconnections = tlconnections  # Store tlconnections for Unity bridge
         self.cars = [
             Car(
                 self, 
@@ -64,3 +72,18 @@ class Renderer(ap.Model):
                 car.step()
 
         self.plot()
+        self.push_state()
+
+    def push_state(self):
+        state = {
+            "cars": [
+                {
+                    "id": id(car),
+                    "position": car.route.pos_at(car.s),
+                    "heading": self._heading(car),
+                    "route_id": id(car.route)
+                } for car in self.cars
+            ],
+        }
+
+        self.net.push_state(state)
