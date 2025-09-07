@@ -1,0 +1,16 @@
+[
+  {"name":"GR1","path":"Routes/Green Routes/GR1","color":"#5ED525","width":0.6,"loop":false},
+  {"name":"GR2","path":"Routes/Green Routes/GR2","color":"#5ED525","width":0.6,"loop":false},
+  {"name":"GR3","path":"Routes/Green Routes/GR3","color":"#5ED525","width":0.6,"loop":false},
+  {"name":"PR1","path":"Routes/Purple Routes/PR1","color":"#7F2EAC","width":0.6,"loop":false},
+  {"name":"PR2","path":"Routes/Purple Routes/PR2","color":"#7F2EAC","width":0.6,"loop":false},
+  {"name":"PR3","path":"Routes/Purple Routes/PR3","color":"#7F2EAC","width":0.6,"loop":false},
+  {"name":"RR0","path":"Routes/Red Routes/RR0","color":"#D52525","width":0.6,"loop":false},
+  {"name":"RR1","path":"Routes/Red Routes/RR1","color":"#D52525","width":0.6,"loop":false},
+  {"name":"RR2","path":"Routes/Red Routes/RR2","color":"#D52525","width":0.6,"loop":false},
+  {"name":"RR3","path":"Routes/Red Routes/RR3","color":"#D52525","width":0.6,"loop":false},
+  {"name":"YR0","path":"Routes/Yellow Routes/YR0","color":"#FFD900","width":0.6,"loop":false},
+  {"name":"YR1","path":"Routes/Yellow Routes/YR1","color":"#FFD900","width":0.6,"loop":false},
+  {"name":"YR2","path":"Routes/Yellow Routes/YR2","color":"#FFD900","width":0.6,"loop":false},
+  {"name":"YR3","path":"Routes/Yellow Routes/YR3","color":"#FFD900","width":0.6,"loop":false}
+]
