@@ -1,4 +1,4 @@
 from model import Renderer
 
-model = Renderer({ 'steps': 400 })
+model = Renderer({ 'steps': 2000 })
 model.run()
