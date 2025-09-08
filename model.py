@@ -210,9 +210,6 @@ class Renderer(ap.Model):
             self.net = NetManager(host="127.0.0.1", port=8080)
             self.net.start()
 
-    def step(self):
-        # 1) Avanza coches
-        for car in getattr(self, "cars", []):
     def step(self, q_regressor=None):
         for car in self.cars:
             if hasattr(car, "step"):
