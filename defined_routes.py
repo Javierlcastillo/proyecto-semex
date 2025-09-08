@@ -24,7 +24,7 @@ _base, _ext = os.path.splitext(ROUTES_PATH)
 META_PATHS = [f"{_base}_meta.json", os.path.join(os.path.dirname(ROUTES_PATH), "routes_meta.json")]
 
 # --- Style defaults
-WIDTH_SCALE = 6.0   # scale widths (e.g., Unity->Matplotlib aesthetics)
+WIDTH_SCALE = 4.0   # scale widths (e.g., Unity->Matplotlib aesthetics)
 MIN_WIDTH   = 1.0
 FALLBACK_COLORS = ['#FFD200', '#FF3B30', '#34C759', '#5856D6',
                    '#A2845E', '#00BCD4', '#FF2D55', '#1E90FF']
