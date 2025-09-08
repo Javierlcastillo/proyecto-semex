@@ -54,22 +54,26 @@ class Car(ap.Agent):
         if L <= 1e-9:
             return
 
-        # stop at red/yellow if approaching the stop line
-        tlc = self.nextTLC
-        if tlc is not None:
-            d = tlc.s - self.s  # distance ahead along the route
-            STOP_DIST = 12.0
-            SAFE_HEAD = 2.0
-            if -SAFE_HEAD <= d <= STOP_DIST and tlc.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
-                # hold position this tick
-                self.position = self.route.pos_at(self.s)
-                return
+        # --- stop at red/yellow lights, handling loops correctly ---
+        STOP_DIST = 12.0     # how far before the stop line we brake
+        SAFE_HEAD = 2.0      # small grace zone around the line
+        WINDOW    = STOP_DIST + SAFE_HEAD
 
-        # advance
+        for c in self.tlconnections:
+            # forward distance along the route from car.s to the stop line
+            ahead = (c.s - self.s) % L          # in [0, L)
+            if ahead <= WINDOW:
+                if c.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
+                    # hold position this tick
+                    self.position = self.route.pos_at(self.s)
+                    return
+
+        # --- normal advance ---
         self.s += self.ds
-        if self.s >= L:               # wrap to avoid sticking at the very end
+        if self.s >= L:
             self.s -= L
         self.position = self.route.pos_at(self.s)
+
 
     def plot(self, ax: axes.Axes):
         x, y = self.position
