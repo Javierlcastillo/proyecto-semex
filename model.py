@@ -166,10 +166,9 @@ class Renderer(ap.Model):
         for i, r in enumerate(routes):
             print(i, getattr(r, "name", f"route_{i}"), r.length)
         # Traffic lights
-        self.tlconnections = tlconnections  # Store tlconnections for Unity bridge
-        self.cars = []
-        self.spawn_step = {id(route): -10 for route in self.routes}  # Track last spawn step for each route
-        self.current_step = 0
+        for tlc in tlconnections:
+            if hasattr(tlc, "traffic_light") and hasattr(tlc.traffic_light, "plot"):
+                tlc.traffic_light.plot(self.ax)
 
         # Debug: print initial positions of all cars
         print('Initial car positions:')

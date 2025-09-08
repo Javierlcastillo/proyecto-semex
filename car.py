@@ -4,7 +4,6 @@ from matplotlib import patches, transforms, axes
 from typing import Optional, Any
 from route import Route, Point
 from traffic_light import TLConnection, TrafficLightState
-from sklearn.ensemble import ExtraTreesRegressor
 
 class Car(ap.Agent):
     route: Route
@@ -49,21 +48,29 @@ class Car(ap.Agent):
             action = actions[np.argmax(q_values)]
         else:
             action = self.ds
-        self.s += action
+
         L = float(getattr(self.route, "length", 0.0))
         if L <= 1e-9:
             return
-        tlc = self.nextTLC
-        if tlc is not None:
-            d = tlc.s - self.s
-            STOP_DIST = 12.0
-            SAFE_HEAD = 2.0
-            if -SAFE_HEAD <= d <= STOP_DIST and tlc.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
-                self.position = self.route.pos_at(self.s)
-                return
-        if self.s >= L:
-            self.s -= L
-        self.position = self.route.pos_at(self.s)
+
+        # --- stop at red/yellow lights, handling loops correctly ---
+        STOP_DIST = 12.0     # how far before the stop line we brake
+        SAFE_HEAD = 2.0      # small grace zone around the line
+        WINDOW    = STOP_DIST + SAFE_HEAD
+
+        for c in self.tlconnections:
+            # forward distance along the route from car.s to the stop line
+            ahead = (c.s - self.s) % L          # in [0, L)
+            if ahead <= WINDOW:
+                if c.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
+                    # hold position this tick
+                    self.position = self.route.pos_at(self.s)
+                else:
+                    self.s += action
+                    if self.s >= L:
+                        self.s -= L
+                    self.position = self.route.pos_at(self.s)
+
         next_state = self.get_state(cars)
         self.update_collision(cars)
         reward = self.calc_reward(prev_state, action, next_state, cars)
