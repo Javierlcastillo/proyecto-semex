@@ -4,6 +4,7 @@ from route import Route
 routes: list[Route] = []
 
 with open("datos/routes.json", "r", encoding="utf-8") as f:
+#with open("yellow_routes.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 
 for points in data:

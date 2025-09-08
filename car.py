@@ -4,8 +4,10 @@ import numpy as np
 from matplotlib import patches, transforms, axes
 from typing import Optional, Any
 from traffic_light import TLConnection
+from sklearn.ensemble import ExtraTreesRegressor
 
-class Car(ap.Agent):
+class Car(ap.Agent):   
+    
     route: Route
     tlconnections: list[TLConnection]
 
@@ -42,11 +44,82 @@ class Car(ap.Agent):
         self.width = 20
         self.height = 10
         self.is_colliding = False
+        self.experience_buffer = []  # For fitted Q-learning
 
-    def step(self):
-        # Aquí es donde iría lo de Q learning, la toma de decisiones con respecto al entorno/estados
-        self.s += self.ds
+    def step(self, cars: list["Car"], q_regressor=None):
+        # Q-learning experience collection
+        prev_state = self.get_state(cars)
+        # Action selection using fitted Q-function if regressor is provided
+        if q_regressor is not None:
+            actions = [0, 1]  # Define your action space
+            inputs = [np.concatenate([prev_state, [a]]) for a in actions]
+            q_values = q_regressor.predict(inputs)
+            action = actions[np.argmax(q_values)]
+        else:
+            action = self.ds  # Default action if no regressor
+        self.s += action
         self.position = self.route.pos_at(self.s)
+        next_state = self.get_state(cars)
+        # Update collision status before reward calculation
+        self.update_collision(cars)
+        reward = self.calc_reward(prev_state, action, next_state, cars)
+        self.experience_buffer.append((prev_state, action, reward, next_state))
+        #print("Car state:", next_state)
+
+    def calc_reward(self, prev_state, action, next_state, cars: list["Car"]):
+        # Basic reward function
+        reward = 0.0
+        # Negative reward for collision
+        if self.is_colliding:
+            reward -= 100.0
+        # Negative reward for running a red light
+        tlc = self.nextTLC
+        if tlc and hasattr(tlc.traffic_light, 'state') and tlc.traffic_light.state == 'red':
+            # If car is close to intersection and light is red
+            if self.s >= tlc.s - self.width and self.s <= tlc.s + self.width:
+                reward -= 50.0
+        # Positive reward for reaching route end
+        if hasattr(self.route, 'length') and self.s >= self.route.length:
+            reward += 200.0
+        # Small negative reward for time spent
+        reward -= 1.0
+        return reward
+    
+
+    def get_state(self, cars: list["Car"]) -> np.ndarray:
+        # Position along route
+        s = self.s
+        # Speed
+        ds = self.ds
+        # Distance to car ahead (on same route, with higher s)
+        cars_ahead = [car for car in cars if car.route == self.route and car.s > self.s]
+        if cars_ahead:
+            dist_to_ahead = min(car.s - self.s for car in cars_ahead)
+        else:
+            dist_to_ahead = float('inf')
+        # Traffic light state (0=red, 1=green, 0.5=yellow, fallback to 1 if not found)
+        tlc = self.nextTLC
+        if tlc and hasattr(tlc.traffic_light, 'state'):
+            tl_state = tlc.traffic_light.state
+            if tl_state == 'red':
+                tl_val = 0.0
+            elif tl_state == 'green':
+                tl_val = 1.0
+            elif tl_state == 'yellow':
+                tl_val = 0.5
+            else:
+                tl_val = 1.0
+        else:
+            tl_val = 1.0
+        # Remaining distance to route end
+        if hasattr(self.route, 'length'):
+            rem_dist = self.route.length - self.s
+        else:
+            rem_dist = 0.0
+        state = np.array([s, ds, dist_to_ahead, tl_val, rem_dist], dtype=np.float32)
+        # Replace inf, -inf, nan with finite values
+        state = np.nan_to_num(state, nan=0.0, posinf=1e6, neginf=-1e6)
+        return state
 
     def plot(self, ax: axes.Axes):
         x, y = self.position

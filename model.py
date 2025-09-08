@@ -69,11 +69,11 @@ class Renderer(ap.Model):
         self.fig.canvas.draw_idle() # type: ignore
         self.fig.canvas.flush_events()
 
-    def step(self):
+    def step(self, q_regressor=None):
         # Advance cars, then repaint them
         for car in self.cars:
             if hasattr(car, "step"):
-                car.step()
+                car.step(self.cars, q_regressor)
 
         # Respawn cars for all routes if spawn position is clear (no car too close ahead), total cars < nCars, and spawn interval passed
         for route in self.routes:
