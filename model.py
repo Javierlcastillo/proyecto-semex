@@ -51,12 +51,6 @@ def _xy_list(pts):
 
 def _get_polyline(route: Route):
 
-from defined_routes import routes
-from defined_tlconnections import tlconnections
-
-from network_manager import NetManager
-
-class Renderer(ap.Model):        
     """
     Return a list of (x,y) for plotting. Tries common containers first,
     then samples using pos_at() + length if needed.
@@ -89,7 +83,6 @@ class Renderer(ap.Model):
             return pts
 
     return []
-
 
 # ---------- Model ----------
 
