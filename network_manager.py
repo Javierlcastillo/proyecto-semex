@@ -1,79 +1,69 @@
+# network_manager.py  — compatible websockets >= 11 (handler(ws) sin 'path')
 import asyncio
-import websockets
-import websockets.exceptions
 import json
-from typing import Any
+import threading
+import websockets
+
 
 class NetManager:
-    def __init__(self, host="localhost", port=8080):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8080):
         self.host = host
         self.port = port
-        self.clients: set[Any] = set()
+        self.clients = set()
+        self.loop = asyncio.new_event_loop()
         self.server = None
-        self.loop = None
+        self._thread = None
 
-    async def _start_server(self):
-        self.server = await websockets.serve(self._handler, self.host, self.port)
-        print(f"WebSocket server started at ws://{self.host}:{self.port}")
-        await self._heartbeat()  # This will keep the server running
+    async def _handle_ws(self, ws):
+        """Maneja una conexión; compatible con websockets >= 11 (sin path)."""
+        self.clients.add(ws)
+        try:
+            # Mantén viva la conexión; consume si el cliente envía algo
+            async for _ in ws:
+                pass
+        finally:
+            self.clients.discard(ws)
+
+    async def _start_async(self):
+        # Creamos un wrapper con la firma exacta que espera websockets >= 11
+        async def handler(websocket):
+            await self._handle_ws(websocket)
+
+        # Si necesitas opciones TLS/headers, agrégalas aquí
+        self.server = await websockets.serve(handler, self.host, self.port)
+        print(f"[WS] Listening on ws://{self.host}:{self.port}")
 
     def start(self):
-        """Start the websocket server in a background thread."""
-        import threading
-        def run():
-            self.loop = asyncio.new_event_loop()
+        """Arranca el servidor en un hilo y deja corriendo el event loop."""
+        if self._thread is not None:
+            return
+
+        def runner():
             asyncio.set_event_loop(self.loop)
-            self.loop.run_until_complete(self._start_server())
-        t = threading.Thread(target=run, daemon=True)
-        t.start()
+            self.loop.run_until_complete(self._start_async())
+            self.loop.run_forever()
 
-    # websockets>=10 passes only the websocket, older versions passed (websocket, path)
-    async def _handler(self, websocket):
-        self.clients.add(websocket)
-        print(f"Client connected: {websocket.remote_address}")
-        try:
-            # Send a welcome message to confirm connection
-            await websocket.send(json.dumps({"type": "welcome", "message": "Connected to simulation server"}))
-            
-            # Keep the connection alive by waiting for messages or connection close
-            async for message in websocket:
-                # Handle incoming messages from client (optional)
-                try:
-                    data = json.loads(message)
-                    print(f"Received message from {websocket.remote_address}: {data}")
-                    # You can add message handling logic here if needed
-                except json.JSONDecodeError:
-                    print(f"Received non-JSON message from {websocket.remote_address}: {message}")
-        except websockets.exceptions.ConnectionClosed:
-            print(f"Connection closed by client: {websocket.remote_address}")
-        except Exception as e:
-            print(f"Error handling client {websocket.remote_address}: {e}")
-        finally:
-            self.clients.discard(websocket)
-            print(f"Client disconnected: {websocket.remote_address}")
+        self._thread = threading.Thread(target=runner, daemon=True)
+        self._thread.start()
 
-    async def _heartbeat(self):
-        """Keep alive loop, can also be used for pings"""
-        while True:
-            await asyncio.sleep(1)
-
-    def push_state(self, state):
-        """Serialize and send state to all connected clients"""
-        if not self.clients:
-            return # No clients connected
-
-        message = json.dumps(state)
-        if self.loop:
-            asyncio.run_coroutine_threadsafe(self._broadcast(message), self.loop)
-
-    async def _broadcast(self, message):
-        dead_clients = []
-        for client in self.clients:
+    async def _broadcast(self, text: str):
+        dead = []
+        for ws in list(self.clients):
             try:
-                await client.send(message)
+                await ws.send(text)
             except Exception:
-                dead_clients.append(client)
+                dead.append(ws)
+        for ws in dead:
+            self.clients.discard(ws)
 
-        for dc in dead_clients:
-            self.clients.remove(dc)
-            print(f"Removed dead client: {dc.remote_address}")
+    def push_state(self, message):
+        """Acepta dict/list/str y envía exactamente un JSON texto (una sola vez)."""
+        if isinstance(message, (dict, list)):
+            text = json.dumps(message, separators=(",", ":"))
+        elif isinstance(message, str):
+            text = message
+        else:
+            text = json.dumps(message, default=str, separators=(",", ":"))
+
+        if self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._broadcast(text), self.loop)

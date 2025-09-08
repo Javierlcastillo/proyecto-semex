@@ -6,11 +6,12 @@ from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 from matplotlib import patches
-
+import json, math
 from route import Route
 from car import Car
 from defined_routes import routes, route_colors, route_widths, route_names
 from defined_tlconnections import tlconnections, traffic_lights
+from network_manager import NetManager
 
 # ---------- helpers (robust + Pylance-friendly) ----------
 
@@ -203,6 +204,15 @@ class Renderer(ap.Model):
         self.fig.canvas.draw_idle()      # type: ignore
         self.fig.canvas.flush_events()   # type: ignore
 
+    def _ensure_net(self):
+        """Crea y arranca el servidor WebSocket si no existe."""
+        if not hasattr(self, "net") or self.net is None:
+            self.net = NetManager(host="127.0.0.1", port=8080)
+            self.net.start()
+
+    def step(self):
+        # 1) Avanza coches
+        for car in getattr(self, "cars", []):
     def step(self, q_regressor=None):
         for car in self.cars:
             if hasattr(car, "step"):
@@ -228,7 +238,54 @@ class Renderer(ap.Model):
                 self.spawn_step[route_id] = self.current_step
 
         self.current_step += 1
-        for tl in traffic_lights:
+        # 2) Avanza semáforos si tienes objetos con step()
+        for tl in (globals().get("traffic_lights") or []):
             if hasattr(tl, "step"):
                 tl.step()
-        self.plot()
+        # 3) (Opcional) plot si quieres conservarlo
+        if hasattr(self, "plot"):
+            self.plot()
+        # 4) Empuja estado
+        self.push_state()
+
+    def push_state(self):
+        self._ensure_net()
+
+        def car_row(car):
+            # Posición: car.position o route.pos_at(s)
+            if hasattr(car, "position") and car.position is not None:
+                x = float(car.position[0]); y = float(car.position[1])
+            else:
+                px, py = car.route.pos_at(float(getattr(car, "s", 0.0)))
+                x = float(px); y = float(py)
+
+            # Heading en GRADOS (Unity usa Quaternion.Euler)
+            try:
+                hdg_rad = float(car.heading())
+            except Exception:
+                hdg_rad = 0.0
+            hdg_deg = float(math.degrees(hdg_rad))
+
+            # IDs estables
+            car_id = int(getattr(car, "id", id(car)))
+            route_obj = getattr(car, "route", None)
+            route_id = int(getattr(route_obj, "id", id(route_obj)))
+
+            return {
+                "id": car_id,
+                "position": [x, y],
+                "heading": hdg_deg,
+                "route_id": route_id,
+                # extras (Unity puede ignorarlos sin problema)
+                "speed": float(getattr(car, "ds", 0.0)),
+                "s": float(getattr(car, "s", 0.0)),
+                "route_name": getattr(route_obj, "name", "") or "",
+                "length": float(getattr(car, "length", 4.2)),
+                "width": float(getattr(car, "width", 1.8)),
+            }
+
+        cars_payload = [car_row(c) for c in getattr(self, "cars", []) if getattr(c, "active", True)]
+        state = { "cars": cars_payload }  # plano root "cars" como consume Unity
+
+        # ENVÍA EL DICT (NetManager serializa; evita doble dumps)
+        self.net.push_state(state)
