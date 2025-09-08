@@ -1,7 +1,7 @@
 from model import Renderer
 from sklearn.ensemble import ExtraTreesRegressor
 
-model = Renderer({ 'steps': 2000, 'nCars' : 50})
+model = Renderer({ 'steps': 1000, 'nCars' : 50})
 model.run()
 
 for idx, car in enumerate(model.cars):

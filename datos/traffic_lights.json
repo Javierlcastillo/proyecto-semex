@@ -1,0 +1,58 @@
+{
+    "lights": [
+        {
+            "id": "TrafficLight_Animated1",
+            "pos": [
+                365.31353759765627,
+                173.32296752929688
+            ],
+            "rotation": -55.0,
+            "state": "RED"
+        },
+        {
+            "id": "TrafficLight_Animated2",
+            "pos": [
+                365.31353759765627,
+                173.32296752929688
+            ],
+            "rotation": -330.0000305175781,
+            "state": "RED"
+        },
+        {
+            "id": "TrafficLight_Animated3",
+            "pos": [
+                215.2254180908203,
+                320.48468017578127
+            ],
+            "rotation": -44.99988555908203,
+            "state": "RED"
+        },
+        {
+            "id": "TrafficLight_Animated4",
+            "pos": [
+                385.5574645996094,
+                456.854736328125
+            ],
+            "rotation": -150.00001525878907,
+            "state": "RED"
+        },
+        {
+            "id": "TrafficLight_Animated5",
+            "pos": [
+                385.5574645996094,
+                456.854736328125
+            ],
+            "rotation": -224.99998474121095,
+            "state": "RED"
+        },
+        {
+            "id": "TrafficLight_Animated6",
+            "pos": [
+                524.8004760742188,
+                324.13018798828127
+            ],
+            "rotation": -224.9999237060547,
+            "state": "RED"
+        }
+    ]
+}

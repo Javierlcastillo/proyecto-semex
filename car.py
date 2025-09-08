@@ -1,9 +1,11 @@
 import agentpy as ap
-from route import Route, Point
 import numpy as np
 from matplotlib import patches, transforms, axes
 from typing import Optional, Any
-from traffic_light import TLConnection
+
+from route import Route, Point
+from traffic_light import TLConnection, TrafficLightState
+
 from sklearn.ensemble import ExtraTreesRegressor
 
 class Car(ap.Agent):   
@@ -12,6 +14,7 @@ class Car(ap.Agent):
     tlconnections: list[TLConnection]
 
     position: Point
+    s: float
     ds: float
 
     maxRateOfAceleration: float
@@ -22,27 +25,25 @@ class Car(ap.Agent):
     patch: Optional[patches.Rectangle]
 
     @property
-    def nextTLC(self):
+    def nextTLC(self) -> Optional[TLConnection]:
+        """Closest upcoming TLConnection along this car's route."""
         nearest: Optional[TLConnection] = None
-
         for tlc in self.tlconnections:
-            if tlc.route == self.route and self.s < tlc.s and (nearest is None or tlc.s < nearest.s):
+            if tlc.route is self.route and self.s < tlc.s and (nearest is None or tlc.s < nearest.s):
                 nearest = tlc
         return nearest
 
-    def setup(self, route: Route, tlconnections: list[TLConnection]): # pyright: ignore[reportIncompatibleMethodOverride]
+    def setup(self, route: Route, tlconnections: list[TLConnection]):  # pyright: ignore[reportIncompatibleMethodOverride]
         self.route = route
         self.tlconnections = tlconnections
 
-        self.s = 0.0
-        self.position = self.route.pos_at(self.s)
+        # movement/physics
+        self.ds = 1.0
+        self.maxRateOfAceleration = float(np.random.uniform(0.8, 1.2))
 
-        self.maxRateOfAceleration = np.random.uniform(0.8, 1.2)
-
-        self.ds = 1  # Amount of S that changes in a step
-
-        self.width = 20
-        self.height = 10
+        # geometry/state
+        self.width = 20.0
+        self.height = 10.0
         self.is_colliding = False
         self.experience_buffer = []  # For fitted Q-learning
 
@@ -58,6 +59,31 @@ class Car(ap.Agent):
         else:
             action = self.ds  # Default action if no regressor
         self.s += action
+        # spawn
+        self.s = 0.0
+        pos0 = getattr(self.route, "json_start", None)
+        self.position = (float(pos0[0]), float(pos0[1])) if pos0 is not None else self.route.pos_at(self.s)
+
+    def step(self):
+        L = float(getattr(self.route, "length", 0.0))
+        if L <= 1e-9:
+            return
+
+        # stop at red/yellow if approaching the stop line
+        tlc = self.nextTLC
+        if tlc is not None:
+            d = tlc.s - self.s  # distance ahead along the route
+            STOP_DIST = 12.0
+            SAFE_HEAD = 2.0
+            if -SAFE_HEAD <= d <= STOP_DIST and tlc.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
+                # hold position this tick
+                self.position = self.route.pos_at(self.s)
+                return
+
+        # advance
+        self.s += self.ds
+        if self.s >= L:               # wrap to avoid sticking at the very end
+            self.s -= L
         self.position = self.route.pos_at(self.s)
         next_state = self.get_state(cars)
         # Update collision status before reward calculation
@@ -128,56 +154,54 @@ class Car(ap.Agent):
         if not hasattr(self, "patch") or self.patch is None:
             self.patch = patches.Rectangle(
                 (x - w/2, y - h/2), w, h,
-                facecolor='black', edgecolor='white', linewidth=1, zorder=2
+                facecolor="black", edgecolor="white", linewidth=1, zorder=2
             )
-            ax.add_patch(self.patch)  # Add patch to Axes
+            ax.add_patch(self.patch)
         else:
             self.patch.set_xy((x - w/2, y - h/2))
 
         angle = self.heading()
-        self.patch.set_transform(
-            transforms.Affine2D().rotate_around(x, y, angle) + ax.transData
-        )        
+        self.patch.set_transform(transforms.Affine2D().rotate_around(x, y, angle) + ax.transData)
 
     def accelerate(self, rate: float):
-        if np.abs(rate) < np.abs(self.maxRateOfAceleration):
+        if abs(rate) < abs(self.maxRateOfAceleration):
             self.ds *= rate
 
-    # --- Collision helpers on the agent ---
-
     def heading(self) -> float:
-        p0 = self.route.pos_at(self.s)
-        p1 = self.route.pos_at(self.s + self.ds)
-        return float(np.arctan2(p1[1] - p0[1], p1[0] - p0[0]))  # radians
+        L = float(getattr(self.route, "length", 0.0))
+        if L <= 1e-9:
+            return 0.0
+        eps = max(1e-3, 0.001 * L)
+        s0 = max(0.0, min(self.s - 0.5 * eps, L))
+        s1 = max(0.0, min(self.s + 0.5 * eps, L))
+        if s1 == s0:
+            s0 = max(0.0, self.s - eps)
+            s1 = min(L,   self.s + eps)
+        x0, y0 = self.route.pos_at(s0)
+        x1, y1 = self.route.pos_at(s1)
+        return float(np.arctan2(y1 - y0, x1 - x0))
 
     def corners(self) -> np.ndarray[Any, Any]:
-        # Oriented rectangle corners (counter-clockwise) in world coords
         x, y = self.position
         w, h = self.width, self.height
         a = self.heading()
         c, s = np.cos(a), np.sin(a)
-        hw, hh = w/2.0, h/2.0
-        local = np.array([
-            [-hw, -hh],
-            [ hw, -hh],
-            [ hw,  hh],
-            [-hw,  hh],
-        ])
-        R = np.array([[c, -s],[s, c]])
+        hw, hh = w / 2.0, h / 2.0
+        local = np.array([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]])
+        R = np.array([[c, -s], [s, c]])
         return local @ R.T + np.array([x, y])
 
     @staticmethod
     def _sat_overlap(A: np.ndarray[Any, Any], B: np.ndarray[Any, Any]) -> bool:
-        # A and B: (4,2) arrays of rectangle corners
         def axes_from(poly: np.ndarray[Any, Any]) -> list[np.ndarray[Any, Any]]:
             edges = np.roll(poly, -1, axis=0) - poly
-            axes = []
-            for e in edges[:2]:  # two unique edge directions for a rectangle
+            axes: list[np.ndarray[Any, Any]] = []
+            for e in edges[:2]:
                 n = np.array([-e[1], e[0]])
                 ln = np.linalg.norm(n)
                 if ln > 1e-9:
-                    axes.append(n / ln) # type: ignore
-            return axes # type: ignore
+                    axes.append(n / ln)  # type: ignore
+            return axes  # type: ignore
 
         for axis in axes_from(A) + axes_from(B):
             projA = A @ axis
