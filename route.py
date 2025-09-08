@@ -41,8 +41,10 @@ class Route:
     """
     segments: Sequence[ParamFunc]
     _cumlen: npt.NDArray[np.float64] = field(init=False)
-    samples_per_segment: int = 600 # Controls arc-length approximation accuracy
+    samples_per_segment: int = 600
     name: str = "Generic"
+
+    json_start: Optional[Point] = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         if not self.segments:

@@ -3,7 +3,11 @@ from route import Route
 from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
+from matplotlib import patches, transforms
 from typing import Optional
+
+Z_TRAFFIC_LIGHTS = 30   # above routes (~1) and cars (~2)
+
 
 class TrafficLightState(enum.Enum):
     RED = "RED"
@@ -14,6 +18,26 @@ class TrafficLight:
     """
     A Traffic Light that lives in the Model and controls the flow of traffic.
     """
+    id: Optional[str]  # <- declarado para el type checker
+    _timer: float = 0.0
+    _dur = {TrafficLightState.RED: 60, TrafficLightState.GREEN: 60, TrafficLightState.YELLOW: 12}
+
+    def step(self, dt: float = 1.0) -> None:
+        self._timer += dt
+        if self._timer >= self._dur[self.state]:
+            self._timer = 0.0
+            self.state = {
+                TrafficLightState.RED:    TrafficLightState.GREEN,
+                TrafficLightState.GREEN:  TrafficLightState.YELLOW,
+                TrafficLightState.YELLOW: TrafficLightState.RED,
+            }[self.state]
+
+        if hasattr(self, "patch") and self.patch is not None:
+            self.patch.set_facecolor(self.state.value.lower())
+            self.patch.set_edgecolor("black")
+            self.patch.set_linewidth(2.0)
+            self.patch.set_zorder(Z_TRAFFIC_LIGHTS)
+
 
     state: TrafficLightState
     patch: Optional[Rectangle] = None
@@ -27,18 +51,38 @@ class TrafficLight:
         self.state = TrafficLightState.RED
         self.x = x
         self.y = y
+        self.width_px = 7.0         # visual width of the head in Python coords
+        self.arm_len  = 35.0        # how far the head extends from the pivot
         self.rotation = rotation
+        self.id = None      # <- valor inicial
 
-    def plot(self, ax: Axes):
-        if not self.patch:
-            self.patch = Rectangle((self.x, self.y), 7, 35, color=self.state.value.lower(), edgecolor='black', zorder=2)
+    def plot(self, ax):
+        w = self.width_px
+        h = self.arm_len
 
-            self.patch.set_transform(
-                Affine2D().rotate_deg_around(self.x, self.y, self.rotation) + ax.transData
+        # Anchor: pivot (self.x, self.y) = bottom-center of the head
+        x0 = self.x - w/2
+        y0 = self.y
+
+        if not hasattr(self, "patch") or self.patch is None:
+            self.patch = patches.Rectangle(
+                (x0, y0), w, h,
+                facecolor=self.state.value.lower(),
+                edgecolor="black",
+                linewidth=2.0,
+                zorder=Z_TRAFFIC_LIGHTS,
             )
             ax.add_patch(self.patch)
         else:
-            self.patch.set_color(self.state.value.lower())
+            self.patch.set_xy((x0, y0))
+            self.patch.set_zorder(Z_TRAFFIC_LIGHTS)
+
+        # Rotate around the mast pivot
+        self.patch.set_transform(
+            transforms.Affine2D().rotate_deg_around(self.x, self.y, self.rotation)
+            + ax.transData
+        )
+
 
 class TLConnection:
     """
