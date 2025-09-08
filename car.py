@@ -2,26 +2,20 @@ import agentpy as ap
 import numpy as np
 from matplotlib import patches, transforms, axes
 from typing import Optional, Any
-
 from route import Route, Point
 from traffic_light import TLConnection, TrafficLightState
-
 from sklearn.ensemble import ExtraTreesRegressor
 
-class Car(ap.Agent):   
-    
+class Car(ap.Agent):
     route: Route
     tlconnections: list[TLConnection]
-
     position: Point
     s: float
     ds: float
-
     maxRateOfAceleration: float
     width: float
     height: float
     is_colliding: bool
-
     patch: Optional[patches.Rectangle]
 
     @property
@@ -33,97 +27,69 @@ class Car(ap.Agent):
                 nearest = tlc
         return nearest
 
-    def setup(self, route: Route, tlconnections: list[TLConnection]):  # pyright: ignore[reportIncompatibleMethodOverride]
+    def setup(self, route: Route, tlconnections: list[TLConnection]):
         self.route = route
         self.tlconnections = tlconnections
-
-        # movement/physics
         self.ds = 1.0
         self.maxRateOfAceleration = float(np.random.uniform(0.8, 1.2))
-
-        # geometry/state
         self.width = 20.0
         self.height = 10.0
         self.is_colliding = False
-        self.experience_buffer = []  # For fitted Q-learning
+        self.experience_buffer = []
+        pos0 = getattr(self.route, "json_start", None)
+        self.s = 0.0
+        self.position = (float(pos0[0]), float(pos0[1])) if pos0 is not None else self.route.pos_at(self.s)
 
     def step(self, cars: list["Car"], q_regressor=None):
-        # Q-learning experience collection
         prev_state = self.get_state(cars)
-        # Action selection using fitted Q-function if regressor is provided
         if q_regressor is not None:
-            actions = [0, 1]  # Define your action space
+            actions = [0, 1]
             inputs = [np.concatenate([prev_state, [a]]) for a in actions]
             q_values = q_regressor.predict(inputs)
             action = actions[np.argmax(q_values)]
         else:
-            action = self.ds  # Default action if no regressor
+            action = self.ds
         self.s += action
-        # spawn
-        self.s = 0.0
-        pos0 = getattr(self.route, "json_start", None)
-        self.position = (float(pos0[0]), float(pos0[1])) if pos0 is not None else self.route.pos_at(self.s)
-
-    def step(self):
         L = float(getattr(self.route, "length", 0.0))
         if L <= 1e-9:
             return
-
-        # stop at red/yellow if approaching the stop line
         tlc = self.nextTLC
         if tlc is not None:
-            d = tlc.s - self.s  # distance ahead along the route
+            d = tlc.s - self.s
             STOP_DIST = 12.0
             SAFE_HEAD = 2.0
             if -SAFE_HEAD <= d <= STOP_DIST and tlc.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
-                # hold position this tick
                 self.position = self.route.pos_at(self.s)
                 return
-
-        # advance
-        self.s += self.ds
-        if self.s >= L:               # wrap to avoid sticking at the very end
+        if self.s >= L:
             self.s -= L
         self.position = self.route.pos_at(self.s)
         next_state = self.get_state(cars)
-        # Update collision status before reward calculation
         self.update_collision(cars)
         reward = self.calc_reward(prev_state, action, next_state, cars)
         self.experience_buffer.append((prev_state, action, reward, next_state))
-        #print("Car state:", next_state)
 
     def calc_reward(self, prev_state, action, next_state, cars: list["Car"]):
-        # Basic reward function
         reward = 0.0
-        # Negative reward for collision
         if self.is_colliding:
-            reward -= 100.0
-        # Negative reward for running a red light
+            reward -= 500.0
         tlc = self.nextTLC
         if tlc and hasattr(tlc.traffic_light, 'state') and tlc.traffic_light.state == 'red':
-            # If car is close to intersection and light is red
             if self.s >= tlc.s - self.width and self.s <= tlc.s + self.width:
                 reward -= 50.0
-        # Positive reward for reaching route end
         if hasattr(self.route, 'length') and self.s >= self.route.length:
             reward += 200.0
-        # Small negative reward for time spent
         reward -= 1.0
         return reward
-    
 
     def get_state(self, cars: list["Car"]) -> np.ndarray:
-        # Position along route
         s = self.s
-        # Speed
         ds = self.ds
-        # Distance to car ahead (on same route, with higher s)
         cars_ahead = [car for car in cars if car.route == self.route and car.s > self.s]
         if cars_ahead:
             dist_to_ahead = min(car.s - self.s for car in cars_ahead)
         else:
             dist_to_ahead = float('inf')
-        # Traffic light state (0=red, 1=green, 0.5=yellow, fallback to 1 if not found)
         tlc = self.nextTLC
         if tlc and hasattr(tlc.traffic_light, 'state'):
             tl_state = tlc.traffic_light.state
@@ -216,4 +182,16 @@ class Car(ap.Agent):
         return self._sat_overlap(self.corners(), other.corners())
 
     def update_collision(self, cars: list["Car"]) -> None:
-        self.is_colliding = any(self.collides_with(o) for o in cars if o is not self)
+        threshold = 30.0  # distance threshold for collision check
+        possible_collisions = []
+        for o in cars:
+            if o is self:
+                continue
+            # Same route, close in s
+            if o.route == self.route and abs(o.s - self.s) < threshold:
+                possible_collisions.append(o)
+            # Crossing route, close in position
+            elif hasattr(self.route, "crosses") and self.route.crosses(o.route):
+                if np.linalg.norm(np.array(o.position) - np.array(self.position)) < threshold:
+                    possible_collisions.append(o)
+        self.is_colliding = any(self.collides_with(o) for o in possible_collisions)

@@ -146,3 +146,14 @@ class Route:
                         return f
                     segs.append(make_line())
         return cls(segs, samples_per_segment=(samples_per_segment or 2))
+
+    def crosses(self, other: "Route") -> bool:
+        # Simple crossing detection: check if any points are close between routes
+        threshold = 20.0  # crossing proximity threshold
+        my_points = self.sample_even(20)
+        other_points = other.sample_even(20)
+        for p1 in my_points:
+            for p2 in other_points:
+                if np.linalg.norm(p1 - p2) < threshold:
+                    return True
+        return False
