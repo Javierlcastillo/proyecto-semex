@@ -11,7 +11,10 @@ from car import Car
 from defined_routes import routes, route_colors, route_widths, route_names
 from defined_tlconnections import tlconnections, traffic_lights
 from network_manager import NetManager
-
+import math
+from typing import Any, Dict  # put at top of file
+import time
+from network_manager import NetManager
 # ---------- helpers (robust + Pylance-friendly) ----------
 
 def _callable_attr(obj, names):
@@ -180,12 +183,17 @@ class Renderer(ap.Model):
         self.fig.canvas.draw_idle()      # type: ignore
         self.fig.canvas.flush_events()   # type: ignore
 
+    # --- add this helper in your model class ---
     def _ensure_net(self):
-        """Crea y arranca el servidor WebSocket si no existe."""
         if not hasattr(self, "net") or self.net is None:
             self.net = NetManager(host="127.0.0.1", port=8080)
             self.net.start()
-
+        # real-time timing init (run once)
+        if not hasattr(self, "_rt_inited"):
+            self._dt = 0.05            # 20 Hz snapshots; change to 0.1 for 10 Hz, etc.
+            self._tick = 0
+            self._t0 = time.perf_counter()
+            self._rt_inited = True
     def step(self):
         # 1) Avanza coches
         for car in getattr(self, "cars", []):
@@ -205,21 +213,20 @@ class Renderer(ap.Model):
         self._ensure_net()
 
         def car_row(car):
-            # Posición: car.position o route.pos_at(s)
+            # position from car.position or route + s
             if hasattr(car, "position") and car.position is not None:
                 x = float(car.position[0]); y = float(car.position[1])
             else:
                 px, py = car.route.pos_at(float(getattr(car, "s", 0.0)))
                 x = float(px); y = float(py)
 
-            # Heading en GRADOS (Unity usa Quaternion.Euler)
+            # heading in DEGREES for Unity
             try:
                 hdg_rad = float(car.heading())
             except Exception:
                 hdg_rad = 0.0
-            hdg_deg = float(math.degrees(hdg_rad))
+            hdg_deg = math.degrees(hdg_rad)
 
-            # IDs estables
             car_id = int(getattr(car, "id", id(car)))
             route_obj = getattr(car, "route", None)
             route_id = int(getattr(route_obj, "id", id(route_obj)))
@@ -227,9 +234,9 @@ class Renderer(ap.Model):
             return {
                 "id": car_id,
                 "position": [x, y],
-                "heading": hdg_deg,
+                "heading": float(hdg_deg),
                 "route_id": route_id,
-                # extras (Unity puede ignorarlos sin problema)
+                # extras (Unity can ignore them)
                 "speed": float(getattr(car, "ds", 0.0)),
                 "s": float(getattr(car, "s", 0.0)),
                 "route_name": getattr(route_obj, "name", "") or "",
@@ -238,7 +245,39 @@ class Renderer(ap.Model):
             }
 
         cars_payload = [car_row(c) for c in getattr(self, "cars", []) if getattr(c, "active", True)]
-        state = { "cars": cars_payload }  # plano root "cars" como consume Unity
 
-        # ENVÍA EL DICT (NetManager serializa; evita doble dumps)
-        self.net.push_state(state)
+        # ---- Lights payload for floor pads (safe if you don't have lights yet) ----
+        lights_payload: list[Dict[str, Any]] = []
+
+        # Prefer a model attribute; change this to your source of lights if different.
+        traffic_lights_iter = getattr(self, "traffic_lights", None) or (globals().get("traffic_lights") or [])
+
+
+        for tl in traffic_lights_iter:
+            # ID
+            lid = str(getattr(tl, "name", getattr(tl, "id", "TL")))
+
+            # State -> string (supports enum-like objects and plain strings)
+            state_val: Any = getattr(tl, "state", "RED")
+            state_str = str(getattr(state_val, "name", state_val))
+            
+
+            # Start row as Dict[str, Any] so floats are allowed
+            row: Dict[str, Any] = {"light_id": lid, "state": state_str}
+
+            # Optional coordinates
+            x = getattr(tl, "x", None)
+            y = getattr(tl, "y", None)
+            if x is not None and y is not None:
+                row["x"] = float(x)
+                row["y"] = float(y)
+
+            # Optional rotation
+            rot = getattr(tl, "rotation_deg", None)
+            row["rotation_deg"] = float(rot) if rot is not None else 0.0
+
+            lights_payload.append(row)
+
+        # Send both; Unity is fine if "lights" is empty
+        state = {"cars": cars_payload, "lights": lights_payload}
+        self.net.push_state(state)  # pass dict; NetManager will json.dumps once
