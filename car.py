@@ -28,24 +28,36 @@ class Car(ap.Agent):
                 nearest = tlc
         return nearest
 
-    def setup(self, route: Route, tlconnections: list[TLConnection]): # pyright: ignore[reportIncompatibleMethodOverride]
+    # car.py
+    def setup(self, route: Route, tlconnections: list[TLConnection]):  # pyright: ignore[reportIncompatibleMethodOverride]
         self.route = route
         self.tlconnections = tlconnections
 
-        self.s = 0.0
-        self.position = self.route.pos_at(self.s)
-
+        # --- movement/physics params (needed by step) ---
+        self.ds = 1.0                               # <-- REQUIRED by step()
         self.maxRateOfAceleration = np.random.uniform(0.8, 1.2)
 
-        self.ds = 1  # Amount of S that changes in a step
-
-        self.width = 20
-        self.height = 10
+        # --- car geometry / state used by plot/collision ---
+        self.width = 20.0
+        self.height = 10.0
         self.is_colliding = False
 
+        # --- spawn position (prefer first coord from routes.json) ---
+        pos0 = getattr(self.route, "json_start", None)   # Optional[Tuple[float, float]]
+        self.s = 0.0
+        if pos0 is not None:
+            self.position = (float(pos0[0]), float(pos0[1]))
+        else:
+            self.position = self.route.pos_at(self.s)
+
+
     def step(self):
-        # Aquí es donde iría lo de Q learning, la toma de decisiones con respecto al entorno/estados
+        L = getattr(self.route, "length", 0.0)
+        if L <= 1e-9: 
+            return
         self.s += self.ds
+        if self.s >= L:               # wrap (or set self.s = 0.0 to respawn)
+            self.s -= L
         self.position = self.route.pos_at(self.s)
 
     def plot(self, ax: axes.Axes):
@@ -73,9 +85,19 @@ class Car(ap.Agent):
     # --- Collision helpers on the agent ---
 
     def heading(self) -> float:
-        p0 = self.route.pos_at(self.s)
-        p1 = self.route.pos_at(self.s + self.ds)
-        return float(np.arctan2(p1[1] - p0[1], p1[0] - p0[0]))  # radians
+        L = getattr(self.route, "length", 0.0)
+        if L <= 1e-9:
+            return 0.0
+        eps = max(1e-3, 0.001 * L)
+        s0 = max(0.0, min(self.s - 0.5*eps, L))
+        s1 = max(0.0, min(self.s + 0.5*eps, L))
+        if s1 == s0:
+            s0 = max(0.0, self.s - eps)
+            s1 = min(L,   self.s + eps)
+        x0, y0 = self.route.pos_at(s0)
+        x1, y1 = self.route.pos_at(s1)
+        return float(np.arctan2(y1 - y0, x1 - x0))
+
 
     def corners(self) -> np.ndarray[Any, Any]:
         # Oriented rectangle corners (counter-clockwise) in world coords

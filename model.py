@@ -98,14 +98,48 @@ class Renderer(ap.Model):
     def setup(self):
         # Data
         self.routes = routes
-        self.cars = [Car(self, r, [tlc for tlc in tlconnections if tlc.route == r])
-                     for r in self.routes]
+
+        # Build cars with TL connections (your code here)
+        self.cars = []
+        for r in self.routes:
+            conns = [tlc for tlc in tlconnections if tlc.route is r]
+            self.cars.append(Car(self, r, conns))
 
         # Figure / Axes
         self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
         self.ax.set_aspect("equal")
-        self.ax.set_xlim(100, 700)
-        self.ax.set_ylim(0, 600)
+
+        # --- Compute bounds from the actual routes and zoom out automatically ---
+        import numpy as np
+
+        def _bounds(rs, samples_per_route: int = 400):
+            xs, ys = [], []
+            for rt in rs:
+                L = getattr(rt, "length", 0.0)
+                if L <= 0:
+                    continue
+                s_vals = np.linspace(0.0, L, samples_per_route)
+                for s in s_vals:
+                    x, y = rt.pos_at(float(s))
+                    xs.append(x); ys.append(y)
+            if not xs:   # fallback
+                return (0, 1, 0, 1)
+            return (min(xs), max(xs), min(ys), max(ys))
+
+        xmin, xmax, ymin, ymax = _bounds(self.routes)
+        pad = 0.10 * max(xmax - xmin, ymax - ymin)  # 10% padding
+        self.ax.set_xlim(xmin - pad, xmax + pad)
+        self.ax.set_ylim(ymin - pad, ymax + pad)
+
+        # (Optional) debug overlay to see starts/ends + current car positions
+        for i, r in enumerate(self.routes):
+            x0, y0 = r.pos_at(0.0)
+            xL, yL = r.pos_at(getattr(r, "length", 0.0))
+            self.ax.scatter([x0, xL], [y0, yL], s=40, edgecolors="k", zorder=5)
+        for c in self.cars:
+            x, y = c.position
+            self.ax.scatter([x], [y], s=60, facecolors="none", edgecolors="k", zorder=6)
+
 
         # Plot routes directly (colors/widths from Unity meta)
         default_palette = [
@@ -124,6 +158,9 @@ class Renderer(ap.Model):
             ys = [p[1] for p in pts]
             self.ax.plot(xs, ys, color=c, linewidth=lw)
 
+            
+        for i, r in enumerate(routes):
+            print(i, getattr(r, "name", f"route_{i}"), r.length)
         # Traffic lights
         for tlc in tlconnections:
             if hasattr(tlc, "traffic_light") and hasattr(tlc.traffic_light, "plot"):
