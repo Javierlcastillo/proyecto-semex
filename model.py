@@ -8,9 +8,8 @@ from matplotlib import patches
 
 from route import Route
 from car import Car
-from defined_routes import routes, route_colors, route_widths
-from defined_tlconnections import tlconnections
-
+from defined_routes import routes, route_colors, route_widths, route_names
+from defined_tlconnections import tlconnections, traffic_lights
 
 # ---------- helpers (robust + Pylance-friendly) ----------
 
@@ -109,8 +108,12 @@ class Renderer(ap.Model):
         self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
         self.ax.set_aspect("equal")
 
+        # draws the small rectangle at (tl.x, tl.y) with tl.rotation    
+        for tl in traffic_lights:
+            tl.plot(self.ax)
+            
+
         # --- Compute bounds from the actual routes and zoom out automatically ---
-        import numpy as np
 
         def _bounds(rs, samples_per_route: int = 400):
             xs, ys = [], []
@@ -180,4 +183,7 @@ class Renderer(ap.Model):
         for car in self.cars:
             if hasattr(car, "step"):
                 car.step()
+        for tl in traffic_lights:
+            if hasattr(tl, "step"):
+                tl.step()
         self.plot()
