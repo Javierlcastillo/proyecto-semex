@@ -99,6 +99,8 @@ class Renderer(ap.Model):
         # Data
         self.routes = routes
 
+        self.current_step = 0
+
         # Build cars with TL connections (your code here)
         self.cars = []
         for r in self.routes:
