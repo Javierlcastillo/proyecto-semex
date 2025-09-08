@@ -18,6 +18,7 @@ class TrafficLight:
     """
     A Traffic Light that lives in the Model and controls the flow of traffic.
     """
+    id: Optional[str]  # <- declarado para el type checker
     _timer: float = 0.0
     _dur = {TrafficLightState.RED: 60, TrafficLightState.GREEN: 60, TrafficLightState.YELLOW: 12}
 
@@ -31,7 +32,6 @@ class TrafficLight:
                 TrafficLightState.YELLOW: TrafficLightState.RED,
             }[self.state]
 
-        # keep visuals in sync
         if hasattr(self, "patch") and self.patch is not None:
             self.patch.set_facecolor(self.state.value.lower())
             self.patch.set_edgecolor("black")
@@ -51,29 +51,38 @@ class TrafficLight:
         self.state = TrafficLightState.RED
         self.x = x
         self.y = y
+        self.width_px = 7.0         # visual width of the head in Python coords
+        self.arm_len  = 35.0        # how far the head extends from the pivot
         self.rotation = rotation
+        self.id = None      # <- valor inicial
 
     def plot(self, ax):
-        w, h = 7, 35
-        x0, y0 = self.x - w/2, self.y - h/2
+        w = self.width_px
+        h = self.arm_len
+
+        # Anchor: pivot (self.x, self.y) = bottom-center of the head
+        x0 = self.x - w/2
+        y0 = self.y
 
         if not hasattr(self, "patch") or self.patch is None:
             self.patch = patches.Rectangle(
                 (x0, y0), w, h,
-                facecolor=self.state.value.lower(),   # ← use facecolor (no warning)
-                edgecolor="black",                    # ← black outline
+                facecolor=self.state.value.lower(),
+                edgecolor="black",
                 linewidth=2.0,
-                zorder=Z_TRAFFIC_LIGHTS               # ← draw above cars/routes
+                zorder=Z_TRAFFIC_LIGHTS,
             )
             ax.add_patch(self.patch)
         else:
             self.patch.set_xy((x0, y0))
             self.patch.set_zorder(Z_TRAFFIC_LIGHTS)
 
+        # Rotate around the mast pivot
         self.patch.set_transform(
             transforms.Affine2D().rotate_deg_around(self.x, self.y, self.rotation)
             + ax.transData
         )
+
 
 class TLConnection:
     """
