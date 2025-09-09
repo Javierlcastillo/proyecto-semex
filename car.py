@@ -8,6 +8,7 @@ from traffic_light import TLConnection, TrafficLightState
 
 
 class Car(ap.Agent):
+
     route: Route
     tlconnections: list[TLConnection]
 
@@ -31,9 +32,10 @@ class Car(ap.Agent):
                 nearest = tlc
         return nearest
 
-    def setup(self, route: Route, tlconnections: list[TLConnection]):  # pyright: ignore[reportIncompatibleMethodOverride]
+    def setup(self, route: Route, tlconnections: list[TLConnection], id : int):  # pyright: ignore[reportIncompatibleMethodOverride]
         self.route = route
         self.tlconnections = tlconnections
+        self.id = id
 
         # movement/physics
         self.ds = 1.0
@@ -73,6 +75,7 @@ class Car(ap.Agent):
         if self.s >= L:
             self.s -= L
         self.position = self.route.pos_at(self.s)
+        self.angle = self.heading()
 
 
     def plot(self, ax: axes.Axes):
@@ -145,3 +148,13 @@ class Car(ap.Agent):
 
     def update_collision(self, cars: list["Car"]) -> None:
         self.is_colliding = any(self.collides_with(o) for o in cars if o is not self)
+
+    def export_state(self):
+        return {
+            "id": self.id,
+            "pos": self.position,
+            "ds": self.ds,
+            "angle": self.angle if self.angle is not None else 0
+        }
+    
+

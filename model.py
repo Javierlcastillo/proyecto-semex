@@ -100,9 +100,11 @@ class Renderer(ap.Model):
 
         # Build cars with TL connections (your code here)
         self.cars = []
+        id = 1
         for r in self.routes:
             conns = [tlc for tlc in tlconnections if tlc.route is r]
-            self.cars.append(Car(self, r, conns))
+            self.cars.append(Car(self, r, conns, id))
+            id+=1;
 
         # Figure / Axes
         self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
@@ -187,3 +189,6 @@ class Renderer(ap.Model):
             if hasattr(tl, "step"):
                 tl.step()
         self.plot()
+    
+    def get_car_states(self):
+        return [car.export_state() for car in self.cars]
