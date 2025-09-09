@@ -96,8 +96,11 @@ class Renderer(ap.Model):
     car_patches: list[patches.Rectangle] = []
 
     def setup(self):
-        # Data
+    # Data
         self.routes = routes
+        self.spawn_step = {}
+
+        self.current_step = 0
 
         # Build cars with TL connections (your code here)
         self.cars = []
@@ -112,7 +115,8 @@ class Renderer(ap.Model):
         # draws the small rectangle at (tl.x, tl.y) with tl.rotation    
         for tl in traffic_lights:
             tl.plot(self.ax)
-            
+
+        self.tlconnections = tlconnections            
 
         # --- Compute bounds from the actual routes and zoom out automatically ---
 
@@ -173,7 +177,7 @@ class Renderer(ap.Model):
         self.fig.show()
 
     def plot(self):
-        # Draw cars at current positions
+        # Draw cars at current positions            
         for car in self.cars:
             if hasattr(car, "plot"):
                 car.plot(self.ax)
@@ -186,11 +190,33 @@ class Renderer(ap.Model):
             self.net = NetManager(host="127.0.0.1", port=8080)
             self.net.start()
 
-    def step(self):
+    def step(self, q_regressor=None):
         # 1) Avanza coches
         for car in getattr(self, "cars", []):
             if hasattr(car, "step"):
-                car.step()
+                car.step(self.cars, q_regressor)
+
+        # Respawn cars for all routes if spawn position is clear (no car too close ahead), total cars < nCars, and spawn interval passed
+        for route in self.routes:
+            route_id = id(route)
+            spawn_pos = route.pos_at(0.0)
+            cars_ahead = [car for car in self.cars if car.route == route and car.s < car.width]
+            if (
+                not cars_ahead
+                and len(self.cars) < self.p.nCars
+                and self.current_step - self.spawn_step.get(route_id, 0) >= 200
+            ):
+                self.cars.append(
+                    Car(
+                        self,
+                        route,
+                        [tlc for tlc in tlconnections if tlc.route == route]
+                    )
+                )
+                self.spawn_step[route_id] = self.current_step
+
+        self.current_step += 1
+
         # 2) Avanza semáforos si tienes objetos con step()
         for tl in (globals().get("traffic_lights") or []):
             if hasattr(tl, "step"):

@@ -44,12 +44,23 @@ class Car(ap.Agent):
         self.height = 10.0
         self.is_colliding = False
 
+        self.experience_buffer = []
+
         # spawn
         self.s = 0.0
         pos0 = getattr(self.route, "json_start", None)
         self.position = (float(pos0[0]), float(pos0[1])) if pos0 is not None else self.route.pos_at(self.s)
 
-    def step(self):
+    def step(self, cars: list["Car"], q_regressor=None):
+        prev_state = self.get_state(cars)
+        if q_regressor is not None:
+            actions = [0, 1]
+            inputs = [np.concatenate([prev_state, [a]]) for a in actions]
+            q_values = q_regressor.predict(inputs)
+            action = actions[np.argmax(q_values)]
+        else:
+            action = self.ds
+
         L = float(getattr(self.route, "length", 0.0))
         if L <= 1e-9:
             return
@@ -67,13 +78,61 @@ class Car(ap.Agent):
                     # hold position this tick
                     self.position = self.route.pos_at(self.s)
                     return
-
-        # --- normal advance ---
-        self.s += self.ds
+                    
+        self.s += action
         if self.s >= L:
             self.s -= L
         self.position = self.route.pos_at(self.s)
+        
+        next_state = self.get_state(cars)
+        self.update_collision(cars)
+        reward = self.calc_reward(prev_state, action, next_state, cars)
+        self.experience_buffer.append((prev_state, action, reward, next_state))
 
+    def calc_reward(self, prev_state, action, next_state, cars: list["Car"]):
+        reward = 0.0
+        if self.is_colliding:
+            reward -= 500.0
+        tlc = self.nextTLC
+        if tlc and hasattr(tlc.traffic_light, 'state') and tlc.traffic_light.state == 'red':
+            if self.s >= tlc.s - self.width and self.s <= tlc.s + self.width:
+                reward -= 50.0
+        if hasattr(self.route, 'length') and self.s >= self.route.length:
+            reward += 200.0
+        reward -= 1.0
+        return reward
+    
+    def get_state(self, cars: list["Car"]) -> np.ndarray:
+        s = self.s
+        ds = self.ds
+        cars_ahead = [car for car in cars if car.route == self.route and car.s > self.s]
+        if cars_ahead:
+            dist_to_ahead = min(car.s - self.s for car in cars_ahead)
+        else:
+            dist_to_ahead = float('inf')
+        tlc = self.nextTLC
+        if tlc and hasattr(tlc.traffic_light, 'state'):
+            tl_state = tlc.traffic_light.state
+            if tl_state == 'red':
+                tl_val = 0.0
+            elif tl_state == 'green':
+                tl_val = 1.0
+            elif tl_state == 'yellow':
+                tl_val = 0.5
+            else:
+                tl_val = 1.0
+        else:
+            tl_val = 1.0
+        # Remaining distance to route end
+        if hasattr(self.route, 'length'):
+            rem_dist = self.route.length - self.s
+        else:
+            rem_dist = 0.0
+        state = np.array([s, ds, dist_to_ahead, tl_val, rem_dist], dtype=np.float32)
+        # Replace inf, -inf, nan with finite values
+        state = np.nan_to_num(state, nan=0.0, posinf=1e6, neginf=-1e6)
+        return state
+    
 
     def plot(self, ax: axes.Axes):
         x, y = self.position
@@ -144,4 +203,16 @@ class Car(ap.Agent):
         return self._sat_overlap(self.corners(), other.corners())
 
     def update_collision(self, cars: list["Car"]) -> None:
-        self.is_colliding = any(self.collides_with(o) for o in cars if o is not self)
+        threshold = 30.0  # distance threshold for collision check
+        possible_collisions = []
+        for o in cars:
+            if o is self:
+                continue
+            # Same route, close in s
+            if o.route == self.route and abs(o.s - self.s) < threshold:
+                possible_collisions.append(o)
+            # Crossing route, close in position
+            elif hasattr(self.route, "crosses") and self.route.crosses(o.route):
+                if np.linalg.norm(np.array(o.position) - np.array(self.position)) < threshold:
+                    possible_collisions.append(o)
+        self.is_colliding = any(self.collides_with(o) for o in possible_collisions)
