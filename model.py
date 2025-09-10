@@ -1,6 +1,7 @@
 # model.py
 import agentpy as ap
 import numpy as np
+import math
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
@@ -104,9 +105,11 @@ class Renderer(ap.Model):
 
         # Build cars with TL connections (your code here)
         self.cars = []
+        id = 1
         for r in self.routes:
             conns = [tlc for tlc in tlconnections if tlc.route is r]
-            self.cars.append(Car(self, r, conns))
+            self.cars.append(Car(self, r, conns, id))
+            id+=1;
 
         # Figure / Axes
         self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
@@ -281,3 +284,57 @@ class Renderer(ap.Model):
         # Send both; Unity is fine if "lights" is empty
         state = {"cars": cars_payload, "lights": lights_payload}
         self.net.push_state(state)  # pass dict; NetManager will json.dumps once
+    
+    def get_car_states(self):
+        return [car.export_state() for car in self.cars]
+    
+    @staticmethod
+    def discretizar_distancias(distancia, num_buckets=5):
+        if distancia == 0:
+            distancia = 0
+        elif distancia >= 10: 
+            distancia = 10
+        
+        t_bucket = 10  / num_buckets
+        bucket = distancia // t_bucket
+
+        if bucket == num_buckets:
+            bucket -= 1
+        return bucket
+
+    def get_state(self, car):
+        """
+        This method will be used as the state representation for Q-learning.
+        """
+        # Get distance to nearest neighbor
+        neighbors = car.perceive_neighbors(self.cars)
+        if neighbors:
+            nearest_distance = min([n[1] for n in neighbors])
+        else:
+            nearest_distance = 10  # max distance or some default large value
+
+        distancia_discreta = self.discretizar_distancias(nearest_distance)
+
+        # Get current rate (velocity) of the car
+        rate_actual = getattr(car, "ds", 0)
+        # Discretize rate (assuming max rate 10 and same buckets)
+        rate_discreto = self.discretizar_distancias(rate_actual)
+
+        # Get relevant traffic light states (0=green,1=red)
+        # Assuming car has attribute conns with tlconnections and each tlconnection has traffic_light with state
+        estados_semaforo = []
+        if hasattr(car, "conns"):
+            for tlc in car.conns:
+                if hasattr(tlc, "traffic_light") and hasattr(tlc.traffic_light, "state"):
+                    # Map light state to 0 or 1 (green=0, red=1)
+                    estado = 0 if tlc.traffic_light.state == "green" else 1
+                    estados_semaforo.append(estado)
+        # If no traffic lights, default state 0
+        if not estados_semaforo:
+            estados_semaforo = [0]
+
+        # For simplicity, use first traffic light state or 0 if none
+        estado_semaforo = estados_semaforo[0]
+
+        return (distancia_discreta, rate_discreto, estado_semaforo)
+    

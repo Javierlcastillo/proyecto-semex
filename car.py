@@ -8,6 +8,7 @@ from traffic_light import TLConnection, TrafficLightState
 
 
 class Car(ap.Agent):
+
     route: Route
     tlconnections: list[TLConnection]
 
@@ -31,9 +32,10 @@ class Car(ap.Agent):
                 nearest = tlc
         return nearest
 
-    def setup(self, route: Route, tlconnections: list[TLConnection]):  # pyright: ignore[reportIncompatibleMethodOverride]
+    def setup(self, route: Route, tlconnections: list[TLConnection], id : int):  # pyright: ignore[reportIncompatibleMethodOverride]
         self.route = route
         self.tlconnections = tlconnections
+        self.id = id
 
         # movement/physics
         self.ds = 1.0
@@ -48,6 +50,28 @@ class Car(ap.Agent):
         self.s = 0.0
         pos0 = getattr(self.route, "json_start", None)
         self.position = (float(pos0[0]), float(pos0[1])) if pos0 is not None else self.route.pos_at(self.s)
+        self.angle = 0.0  # Initialize angle to avoid errors in export_state
+
+    def perceive_neighbors(self, cars: list["Car"], radio: float = 10.0) -> list[tuple[float, "Car"]]:
+        """
+        Perception method for local neighbors within a given radius.
+        Returns a list of tuples (distance, car) sorted by distance.
+        Optionally discretizes distance using model's discretizar_distancias method if available.
+        """
+        neighbors = []
+        for car in cars:
+            if car is self:
+                continue
+            dx = car.position[0] - self.position[0]
+            dy = car.position[1] - self.position[1]
+            dist = np.hypot(dx, dy)
+            if dist <= radio:
+                # Discretize distance if model has discretizar_distancias method
+                if hasattr(self.model, "discretizar_distancias"):
+                    dist = self.model.discretizar_distancias(dist)
+                neighbors.append((dist, car))
+        neighbors.sort(key=lambda x: x[0])
+        return neighbors
 
     def step(self):
         L = float(getattr(self.route, "length", 0.0))
@@ -73,6 +97,7 @@ class Car(ap.Agent):
         if self.s >= L:
             self.s -= L
         self.position = self.route.pos_at(self.s)
+        self.angle = self.heading()
 
 
     def plot(self, ax: axes.Axes):
@@ -145,3 +170,32 @@ class Car(ap.Agent):
 
     def update_collision(self, cars: list["Car"]) -> None:
         self.is_colliding = any(self.collides_with(o) for o in cars if o is not self)
+
+    def export_state(self):
+        return {
+            "id": self.id,
+            "pos": self.position,
+            "ds": self.ds,
+            "angle": self.angle if self.angle is not None else 0
+        }
+    
+    def apply_q_action(self, action):
+        if action == "frenar":
+            self.ds = max(0, self.ds - 0.5)
+        elif action == "mantener":
+            pass  # no cambia ds
+        elif action == "acelerar":
+            self.ds += 0.5
+    
+    def apply_action(self, car, action):
+        # Llama al método del car para aplicar la acción
+        if hasattr(car, "apply_q_action"):
+            car.apply_q_action(action)
+            
+    def compute_reward(self, car):
+        if car.is_colliding:
+            return -100
+        elif car.ds == 0:
+            return -5  # castiga quedarse detenido
+        else:
+            return +1  # recompensa avanzar sin chocar
