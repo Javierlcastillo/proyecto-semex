@@ -16,6 +16,7 @@ import math
 from typing import Any, Dict  # put at top of file
 import time
 from network_manager import NetManager
+from traffic_light import TrafficLightState
 # ---------- helpers (robust + Pylance-friendly) ----------
 
 def _callable_attr(obj, names):
@@ -104,12 +105,15 @@ class Renderer(ap.Model):
         self.routes = routes
 
         # Build cars with TL connections (your code here)
+        self.spawn_step = {}
+
+        self.current_step = 0
         self.cars = []
         id = 1
         for r in self.routes:
             conns = [tlc for tlc in tlconnections if tlc.route is r]
             self.cars.append(Car(self, r, conns, id))
-            id+=1;
+            id += 1
 
         # Figure / Axes
         self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
@@ -202,10 +206,37 @@ class Renderer(ap.Model):
         for car in getattr(self, "cars", []):
             if hasattr(car, "step"):
                 car.step()
+
+        for route in self.routes:
+            route_id = id(route)
+            spawn_pos = route.pos_at(0.0)
+            cars_ahead = [car for car in self.cars if car.route == route and car.s < car.width]
+            if (
+                not cars_ahead
+                and len(self.cars) < self.p.nCars
+                and self.current_step - self.spawn_step.get(route_id, 0) >= 200
+            ):
+                self.cars.append(
+                    Car(
+                        self,
+                        route,
+                        [tlc for tlc in tlconnections if tlc.route == route],
+                        self.id
+                    )
+                )
+                self.id += 1
+                self.spawn_step[route_id] = self.current_step
+        
+        self.current_step += 1
+
         # 2) Avanza semáforos si tienes objetos con step()
+        # Fuerza todos los semáforos a rojo para pruebas
         for tl in (globals().get("traffic_lights") or []):
             if hasattr(tl, "step"):
                 tl.step()
+        # 2.5) Imprime el diccionario de colas por semáforo para depuración
+        queues = self.get_queues_by_traffic_light(self.cars, tlconnections)
+        #print("Colas por semáforo:", queues)
         # 3) (Opcional) plot si quieres conservarlo
         if hasattr(self, "plot"):
             self.plot()
@@ -337,4 +368,30 @@ class Renderer(ap.Model):
         estado_semaforo = estados_semaforo[0]
 
         return (distancia_discreta, rate_discreto, estado_semaforo)
+
+    def get_queues_by_traffic_light(self, cars, tlconnections, threshold=100.0):
+        """
+        Devuelve un diccionario {traffic_light_id: cantidad_de_autos_en_cola}
+        Un auto se considera en cola si está en la misma ruta y cerca del semáforo (dentro de threshold).
+        """
+        queues_red = {}
+        for tlc in tlconnections:
+            tl_id = getattr(tlc.traffic_light, "id", None)
+            if tl_id is None:
+                continue
+            # Filtra autos en la misma ruta y detrás del semáforo
+            cars_on_route = [car for car in cars if car.route == tlc.route and car.s < tlc.s]
+            # Ordena por posición (más cerca del semáforo primero)
+            cars_on_route.sort(key=lambda car: tlc.s - car.s)
+            count_queue = 0
+            # Solo cuenta si el semáforo está en rojo
+            if tlc.traffic_light.state == TrafficLightState.RED:
+                for car in cars_on_route:
+                    # Considera que el auto está parado si su velocidad es 0
+                    if hasattr(car, 'v') and car.v == 0:
+                        count_queue += 1
+                    else:
+                        break  # Si el auto no está parado, la fila se rompe
+            queues_red[tl_id] = queues_red.get(tl_id, 0) + count_queue
+        return queues_red
     

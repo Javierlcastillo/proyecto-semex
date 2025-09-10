@@ -52,6 +52,9 @@ class Car(ap.Agent):
         self.position = (float(pos0[0]), float(pos0[1])) if pos0 is not None else self.route.pos_at(self.s)
         self.angle = 0.0  # Initialize angle to avoid errors in export_state
 
+        # Estado de movimiento ('stop' o 'moving')
+        self.state = "moving"
+
     def perceive_neighbors(self, cars: list["Car"], radio: float = 10.0) -> list[tuple[float, "Car"]]:
         """
         Perception method for local neighbors within a given radius.
@@ -90,14 +93,57 @@ class Car(ap.Agent):
                 if c.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
                     # hold position this tick
                     self.position = self.route.pos_at(self.s)
+                    self.state = "stop"
                     return
 
+        # --- stop if blocked by another car ahead ---
+        # Busca autos en la misma ruta, adelante y suficientemente cerca
+        BLOCK_DIST = 30.0
+        blocked = False
+        if hasattr(self, 'model') and hasattr(self.model, 'cars'):
+            for other in self.model.cars:
+                if other is self:
+                    continue
+                if other.route == self.route and 0 < (other.s - self.s) < BLOCK_DIST:
+                    if getattr(other, 'state', None) == "stop":
+                        # El auto de adelante está parado, este también se detiene
+                        self.position = self.route.pos_at(self.s)
+                        self.state = "stop"
+                        blocked = True
+                        break
+        if blocked:
+            return
+
+        # Si estaba en stop, verifica si puede avanzar por semáforo verde o espacio libre
+        if self.state == "stop":
+            can_move = True
+            # Verifica semáforo
+            for c in self.tlconnections:
+                ahead = (c.s - self.s) % L
+                if ahead <= WINDOW:
+                    if c.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
+                        can_move = False
+                        break
+            # Verifica espacio libre adelante
+            if can_move and hasattr(self, 'model') and hasattr(self.model, 'cars'):
+                BLOCK_DIST = 10.0
+                for other in self.model.cars:
+                    if other is self:
+                        continue
+                    if other.route == self.route and 0 < (other.s - self.s) < BLOCK_DIST:
+                        if getattr(other, 'state', None) == "stop":
+                            can_move = False
+                            break
+            if can_move:
+                self.state = "moving"
+
         # --- normal advance ---
-        self.s += self.ds
-        if self.s >= L:
-            self.s -= L
-        self.position = self.route.pos_at(self.s)
-        self.angle = self.heading()
+        if self.state == "moving":
+            self.s += self.ds
+            if self.s >= L:
+                self.s -= L
+            self.position = self.route.pos_at(self.s)
+            self.angle = self.heading()
 
 
     def plot(self, ax: axes.Axes):
