@@ -14,9 +14,9 @@ class QLearner:
             self.q_table[state] = np.zeros(len(self.actions))
         return self.q_table[state]
 
-    def choose_action(self, state):
+    def choose_action(self, state, exploration=True):
         q_values = self.get_q_values(state)
-        if np.random.rand() < self.epsilon:
+        if exploration and np.random.rand() < self.epsilon:
             return np.random.choice(self.actions)
         else:
             return self.actions[np.argmax(q_values)]

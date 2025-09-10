@@ -109,7 +109,7 @@ class Renderer(ap.Model):
         for r in self.routes:
             conns = [tlc for tlc in tlconnections if tlc.route is r]
             self.cars.append(Car(self, r, conns, id))
-            id+=1;
+            id+=1
 
         # Figure / Axes
         self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
@@ -302,39 +302,46 @@ class Renderer(ap.Model):
             bucket -= 1
         return bucket
 
-    def get_state(self, car):
+    def get_state(self, car: Car):
         """
-        This method will be used as the state representation for Q-learning.
+        Computes the discretized state for a car agent.
+        The state is a tuple containing:
+        - Discretized distance to the car in front.
+        - Discretized speed of the car.
+        - State of the next traffic light (0: Green, 1: Yellow, 2: Red).
+        - Discretized distance to the next traffic light.
         """
-        # Get distance to nearest neighbor
-        neighbors = car.perceive_neighbors(self.cars)
-        if neighbors:
-            nearest_distance = min([n[1] for n in neighbors])
+        # 1. Distancia al coche de enfrente
+        car_en_frente_dist = 10.0  # Valor por defecto si no hay coche enfrente
+        for other_car in self.cars:
+            if other_car is not car and other_car.route is car.route and other_car.s > car.s:
+                dist = other_car.s - car.s
+                if dist < car_en_frente_dist:
+                    car_en_frente_dist = dist
+        
+        distancia_discreta_coche = self.discretizar_distancias(car_en_frente_dist)
+
+        # 2. Velocidad actual del coche
+        velocidad_discreta = self.discretizar_distancias(car.ds)
+
+        # 3. Estado y distancia al próximo semáforo
+        next_tlc = car.nextTLC
+        if next_tlc:
+            # Mapeo del estado del semáforo a un entero
+            estado_semaforo_map = {
+                "GREEN": 0,
+                "YELLOW": 1,
+                "RED": 2
+            }
+            estado_semaforo = estado_semaforo_map.get(next_tlc.traffic_light.state.name, 2) # Default to RED
+            
+            # Distancia al semáforo a lo largo de la ruta
+            distancia_semaforo = (next_tlc.s - car.s) % car.route.length
+            distancia_discreta_semaforo = self.discretizar_distancias(distancia_semaforo)
         else:
-            nearest_distance = 10  # max distance or some default large value
+            # Valores por defecto si no hay semáforo en la ruta
+            estado_semaforo = 0  # Como si estuviera siempre en verde
+            distancia_discreta_semaforo = self.discretizar_distancias(10.0) # Distancia máxima
 
-        distancia_discreta = self.discretizar_distancias(nearest_distance)
-
-        # Get current rate (velocity) of the car
-        rate_actual = getattr(car, "ds", 0)
-        # Discretize rate (assuming max rate 10 and same buckets)
-        rate_discreto = self.discretizar_distancias(rate_actual)
-
-        # Get relevant traffic light states (0=green,1=red)
-        # Assuming car has attribute conns with tlconnections and each tlconnection has traffic_light with state
-        estados_semaforo = []
-        if hasattr(car, "conns"):
-            for tlc in car.conns:
-                if hasattr(tlc, "traffic_light") and hasattr(tlc.traffic_light, "state"):
-                    # Map light state to 0 or 1 (green=0, red=1)
-                    estado = 0 if tlc.traffic_light.state == "green" else 1
-                    estados_semaforo.append(estado)
-        # If no traffic lights, default state 0
-        if not estados_semaforo:
-            estados_semaforo = [0]
-
-        # For simplicity, use first traffic light state or 0 if none
-        estado_semaforo = estados_semaforo[0]
-
-        return (distancia_discreta, rate_discreto, estado_semaforo)
+        return (distancia_discreta_coche, velocidad_discreta, estado_semaforo, distancia_discreta_semaforo)
     

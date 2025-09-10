@@ -5,12 +5,14 @@ from typing import Optional, Any
 
 from route import Route, Point
 from traffic_light import TLConnection, TrafficLightState
+from qlearner import QLearner
 
 
 class Car(ap.Agent):
 
     route: Route
     tlconnections: list[TLConnection]
+    q_learner: Optional[QLearner]
 
     position: Point
     s: float
@@ -23,19 +25,12 @@ class Car(ap.Agent):
 
     patch: Optional[patches.Rectangle]
 
-    @property
-    def nextTLC(self) -> Optional[TLConnection]:
-        """Closest upcoming TLConnection along this car's route."""
-        nearest: Optional[TLConnection] = None
-        for tlc in self.tlconnections:
-            if tlc.route is self.route and self.s < tlc.s and (nearest is None or tlc.s < nearest.s):
-                nearest = tlc
-        return nearest
-
-    def setup(self, route: Route, tlconnections: list[TLConnection], id : int):  # pyright: ignore[reportIncompatibleMethodOverride]
+    def __init__(self, model: ap.Model, route: Route, tlconnections: list[TLConnection], id : int, q_learner: QLearner = None):
+        super().__init__(model)
         self.route = route
         self.tlconnections = tlconnections
         self.id = id
+        self.q_learner = q_learner
 
         # movement/physics
         self.ds = 1.0
@@ -51,6 +46,15 @@ class Car(ap.Agent):
         pos0 = getattr(self.route, "json_start", None)
         self.position = (float(pos0[0]), float(pos0[1])) if pos0 is not None else self.route.pos_at(self.s)
         self.angle = 0.0  # Initialize angle to avoid errors in export_state
+
+    @property
+    def nextTLC(self) -> Optional[TLConnection]:
+        """Closest upcoming TLConnection along this car's route."""
+        nearest: Optional[TLConnection] = None
+        for tlc in self.tlconnections:
+            if tlc.route is self.route and self.s < tlc.s and (nearest is None or tlc.s < nearest.s):
+                nearest = tlc
+        return nearest
 
     def perceive_neighbors(self, cars: list["Car"], radio: float = 10.0) -> list[tuple[float, "Car"]]:
         """
@@ -78,19 +82,27 @@ class Car(ap.Agent):
         if L <= 1e-9:
             return
 
-        # --- stop at red/yellow lights, handling loops correctly ---
-        STOP_DIST = 12.0     # how far before the stop line we brake
-        SAFE_HEAD = 2.0      # small grace zone around the line
-        WINDOW    = STOP_DIST + SAFE_HEAD
+        # --- Q-learning based decision making ---
+        if self.q_learner:
+            state = self.model.get_state(self)
+            action = self.q_learner.choose_action(state, exploration=False)
+            self.apply_q_action(action)
+        
+        # --- Default decision making ---
+        else:
+            # --- stop at red/yellow lights, handling loops correctly ---
+            STOP_DIST = 12.0     # how far before the stop line we brake
+            SAFE_HEAD = 2.0      # small grace zone around the line
+            WINDOW    = STOP_DIST + SAFE_HEAD
 
-        for c in self.tlconnections:
-            # forward distance along the route from car.s to the stop line
-            ahead = (c.s - self.s) % L          # in [0, L)
-            if ahead <= WINDOW:
-                if c.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
-                    # hold position this tick
-                    self.position = self.route.pos_at(self.s)
-                    return
+            for c in self.tlconnections:
+                # forward distance along the route from car.s to the stop line
+                ahead = (c.s - self.s) % L          # in [0, L)
+                if ahead <= WINDOW:
+                    if c.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
+                        # hold position this tick
+                        self.position = self.route.pos_at(self.s)
+                        return
 
         # --- normal advance ---
         self.s += self.ds
