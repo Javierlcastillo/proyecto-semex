@@ -43,14 +43,14 @@ class NetManager:
                     print(f"Received message from {websocket.remote_address}: {data}")
                     # You can add message handling logic here if needed
                 except json.JSONDecodeError:
-                    print(f"Received non-JSON message from {websocket.remote_address}: {message}")
+                    print(f"\nReceived non-JSON message from {websocket.remote_address}: {message}")
         except websockets.exceptions.ConnectionClosed:
-            print(f"Connection closed by client: {websocket.remote_address}")
+            print(f"\nConnection closed by client: {websocket.remote_address}")
         except Exception as e:
-            print(f"Error handling client {websocket.remote_address}: {e}")
+            print(f"\nError handling client {websocket.remote_address}: {e}")
         finally:
             self.clients.discard(websocket)
-            print(f"Client disconnected: {websocket.remote_address}")
+            print(f"\nClient disconnected: {websocket.remote_address}")
 
     async def _heartbeat(self):
         """Keep alive loop, can also be used for pings"""
