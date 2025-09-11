@@ -109,6 +109,7 @@ class Car(ap.Agent):
         x1, y1 = self.route.pos_at(s1)
         return float(np.arctan2(y1 - y0, x1 - x0))
 
+<<<<<<< Updated upstream
     def corners(self) -> np.ndarray[Any, Any]:
         x, y = self.position
         w, h = self.width, self.height
@@ -145,3 +146,12 @@ class Car(ap.Agent):
 
     def update_collision(self, cars: list["Car"]) -> None:
         self.is_colliding = any(self.collides_with(o) for o in cars if o is not self)
+=======
+    # reward helper used elsewhere
+    def compute_reward(self, car: "Car"):
+        if car.is_colliding:
+            return -100
+        if car.ds == 0:
+            return -5
+        return +1
+>>>>>>> Stashed changes
