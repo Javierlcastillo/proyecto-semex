@@ -132,9 +132,10 @@ class Model(ap.Model):
         flow_path = p.get('flow_path', 'data/traffic_flow.json')
         self.load_flow_data(flow_path)
         
-        # Initialize active cars list and spawn queues
+        # Initialize active cars list and spawn queues as well as cars finished
         self.active_cars = []
         self.car_spawn_queues = {i: [] for i in range(len(self.routes))}
+        self.list_finished_cars = []
         
         # Calculate steps per interval based on time_interval_minutes
         minutes_per_step = 1 / 60  # assuming 1 step = 1 second
@@ -165,6 +166,8 @@ class Model(ap.Model):
             atexit.register(self._finalize_gif)
 
     def step(self):
+        # 0) initialize cars_finished counter per step to 0
+        self.finished_cars = 0
         # 0) Check for new cars to spawn
         for route_idx, spawn_times in self.car_spawn_queues.items():
             while spawn_times and spawn_times[0] <= self.t:
@@ -203,6 +206,8 @@ class Model(ap.Model):
             self.plot()
 
         # 8) Push state to clients
+        # 9) append to list of finished cars
+        self.list_finished_cars.append(self.finished_cars)
         self.push_state()
 
     def plot(self):

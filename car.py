@@ -109,7 +109,8 @@ class Car(ap.Agent):
             return  # eval-only: no memory, no fitting, no epsilon decay
 
         # Reward + terminal
-        done = self.is_colliding or (hasattr(self.route, "length") and self.s >= float(self.route.length))
+        killed = self.is_colliding 
+        done = (hasattr(self.route, "length") and self.s >= float(self.route.length))
         reward = self.calculate_reward(state, action)
 
         # Store + periodic train
@@ -119,6 +120,9 @@ class Car(ap.Agent):
             self.train_from_replay(sample_size=256)
 
         if done:
+            self.reset_episode()
+            self.model.finished_cars += 1
+        elif killed:
             self.reset_episode()
 
         # Epsilon decay
