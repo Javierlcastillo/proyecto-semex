@@ -17,31 +17,36 @@ class Car(ap.Agent):
     """Route-following car with route-agnostic predictive collision avoidance."""
 
     # --- init ---
-    def __init__(self, model: ap.Model, route: Route, tlconnections: list[TLConnection],
-                 id: int, q_learner: Optional[QLearner] = None):
+    def __init__(self, model, route, tlconnections, id, q_learner=None):
         super().__init__(model)
         self.route = route
         self.tlconnections = list(tlconnections or [])
         self.id = id
         self.q_learner = q_learner
 
-        # kinematics
-        self.s: float = 0.0           # curvilinear position along the route
-        self.ds: float = 4.0          # speed (units / tick)
-        self.v_max: float = 6.0       # desired cruise speed
-        self.free_accel: float = 0.25 # smooth accel when free
-        self.restart_speed: float = 1.2  # kick to start after a stop
+        # --- kinematics ---
+        self.s = 0.0
+        self.ds = 4.0
+        self.v_max = 6.0
+        self.free_accel = 0.25
+        self.restart_speed = 1.2
 
-        # geometry (rectangle footprint, same units as routes)
-        self.width: float = 20.0
-        self.height: float = 10.0
+        # --- geometry (define FIRST) ---
+        self.width = 20.0
+        self.height = 10.0
 
-        # render/state
+        # --- spacing knobs (can depend on height) ---
+        self.queue_gap = 12.0            # desired standstill gap
+        self.lane_tol = self.height * 0.6  # same-lane lateral tolerance
+        self.t_headway = 0.40            # extra gap that scales with speed
+
+        # --- render/state ---
         self.position = self.route.pos_at(self.s)
-        self.angle: float = 0.0
-        self.state: str = "moving"    # "moving" | "stop"
-        self.is_colliding: bool = False
-        self.patch: Optional[patches.Rectangle] = None
+        self.angle = 0.0
+        self.state = "moving"
+        self.is_colliding = False
+        self.patch = None
+
 
     # ---------- geometry ----------
     def heading_at(self, s: float) -> float:
@@ -191,6 +196,25 @@ class Car(ap.Agent):
                     return choose(state)                # state only
                 except TypeError:
                     return None
+    def _long_lat(self, other):
+        a = self.heading()
+        dirx, diry = np.cos(a), np.sin(a)
+        dx = other.position[0] - self.position[0]
+        dy = other.position[1] - self.position[1]
+        longi = dx*dirx + dy*diry                  # forward distance (center-to-center)
+        lat   = -dx*diry + dy*dirx                 # lateral offset (right = +)
+        return float(longi), float(lat)
+
+    def too_close_ahead(self, other, preview_self=None) -> bool:
+        # only same-lane-ish and ahead
+        longi, lat = self._long_lat(other)
+        if longi <= 0 or abs(lat) > self.lane_tol:
+            return False
+        # clearance between bumpers along forward axis
+        ds_self = self.ds if preview_self is None else float(preview_self)
+        clearance = longi - (self.width*0.5 + other.width*0.5)
+        desired   = self.queue_gap + self.t_headway*ds_self
+        return clearance < desired
 
     # ---------- main step ----------
     def step(self):
@@ -220,52 +244,54 @@ class Car(ap.Agent):
             for _, other in self.perceive_neighbors(self.model.cars, radio=60.0):
                 if not self._is_in_front(other):
                     continue
-                if self.will_collide_next(other):
-                    self.ds = max(0.0, self.ds - 0.6)  # brake
-                    if self.will_collide_next(other):
+                if self.will_collide_next(other) or self.too_close_ahead(other):
+                    self.ds = max(0.0, self.ds - 0.6)
+                    if self.will_collide_next(other) or self.too_close_ahead(other):
                         self.state = "stop"
                         self.position = self.route.pos_at(self.s)
                         self.angle = self.heading_at(self.s)
                         self.update_collision(self.model.cars)
                         return
 
-        # resume if clear (after red -> green)
+        # --- resume if clear (after a red) ---
         if self.state == "stop":
             can_move = True
 
-            # still red/yellow? keep stopped
+            # 1) still red/yellow? stay stopped
             if tlc is not None:
                 ahead = (tlc.s - self.s) % L
                 if ahead <= 14.0 and tlc.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
                     can_move = False
 
-            # try to clear any nose-to-tail overlap by nudging forward
+            # 2) optional: clear nose-to-tail overlap with a tiny nudge
             if can_move and hasattr(self, "model") and hasattr(self.model, "cars"):
                 cars = self.model.cars
                 if any(self.overlap_now(o) for o in cars if o is not self):
                     self.resolve_overlap_forward(cars, max_push=2.0, step=0.2)
 
-            # only consider hazards AHEAD and preview our own restart motion
-            preview_speed = max(self.ds, self.restart_speed)
+            # 3) >>> STEP 4 goes HERE <<<
             if can_move and hasattr(self, "model") and hasattr(self.model, "cars"):
+                preview_speed = max(self.ds, self.restart_speed)
                 for _, other in self.perceive_neighbors(self.model.cars, radio=60.0):
                     if not self._is_in_front(other):
-                        continue
-                    if self.hazard_ahead_next(other, preview_self=preview_speed):
+                        continue  # rear/adjacent cars don't block us
+                    if self.hazard_ahead_next(other, preview_self=preview_speed) or \
+                    self.too_close_ahead(other, preview_self=preview_speed):
                         can_move = False
                         break
 
+            # 4) finalize decision
             if not can_move:
-                # stay stopped this tick
                 self.position = self.route.pos_at(self.s)
                 self.angle = self.heading_at(self.s)
                 self.update_collision(self.model.cars)
                 return
 
-            # cleared -> start rolling again
+            # cleared -> start rolling
             self.state = "moving"
             if self.ds < self.restart_speed:
                 self.ds = self.restart_speed
+
 
         # gentle free-flow acceleration when clear
         if self.state == "moving" and self.ds < self.v_max:
