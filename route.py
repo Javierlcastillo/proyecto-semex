@@ -83,7 +83,9 @@ class Route:
         s = np.linspace(0.0, self.length, n, dtype=np.float64)
         return _interpolate_points(self._points, s, self._cumulative_lengths)
     
-    def plot(self, ax: Axes, color: str = 'black'):
+    def plot(self, ax: Optional[Axes], color: str = 'black'):
+        if ax is None:
+            return
         pts = self.sample_even(500)
         ax.plot(pts[:,0], pts[:,1], color=color, linewidth=2, zorder=1) # type: ignore
 

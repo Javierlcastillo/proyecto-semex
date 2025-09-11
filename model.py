@@ -12,7 +12,7 @@ from route import Route
 from car import Car
 
 from defined_routes import routes, route_colors
-from defined_tlconnections import tlconnections, traffic_lights
+from defined_tlconnections import generate_tlconnections
 
 from network_manager import NetManager
 import os
@@ -20,6 +20,9 @@ import atexit
 from datetime import datetime
 from typing import Optional
 from matplotlib.animation import PillowWriter
+
+from traffic_light import TLConnection
+from traffic_light_controller import TrafficLightController
 
 class Model(ap.Model):
     """
@@ -36,7 +39,11 @@ class Model(ap.Model):
     net: NetManager
 
     collision_flags: Dict[Car, bool] = {}
-    
+
+    ### TRAFFIC LIGHT CONTROLLER ###
+    tlcontr: TrafficLightController
+    tlconns: list[TLConnection]
+
     # Flow-based spawning
     flow_data: Dict[str, Any] = {}
     car_spawn_queues: Dict[int, List[float]] = {}  # route_idx -> [spawn_times]
@@ -56,9 +63,6 @@ class Model(ap.Model):
     def setup(self):
         self.net = NetManager()
         self.net.start()
-
-        self.routes = routes
-        self.tlconnections = tlconnections
 
         # Mode switches (with defaults)
         p = getattr(self, "p", {})
@@ -83,13 +87,20 @@ class Model(ap.Model):
             plt.ion() # type: ignore
             plt.show(block=False) # type: ignore
 
-            for tl in traffic_lights:
-                tl.plot(self.ax)
+        self.routes = routes
+        self.tlconns = generate_tlconnections(self.ax)
 
-            for i, r in enumerate(self.routes):
-                r.plot(self.ax, color=route_colors[i] if i < len(route_colors) else "black")
+        for tlc in self.tlconns:
+            tlc.traffic_light.plot()
+
+        for i, route in enumerate(self.routes):
+            route.plot(self.ax, color=route_colors[i] if i < len(route_colors) else "black")
 
         ### END RENDERING ###
+
+        
+
+        self.tlcontr = TrafficLightController(self, self.tlconns)
 
         self.policy_dir: str = str(p.get('policy_dir', 'checkpoints'))
 
@@ -118,7 +129,7 @@ class Model(ap.Model):
         self.gif_dpi = int(p.get('gif_dpi', 100))
         default_video_dir = os.path.join(os.getcwd(), "videos")
         os.makedirs(default_video_dir, exist_ok=True)
-        default_gif_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{self._steps}steps.gif"
+        default_gif_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{self.t}_steps.gif"
         self.gif_path = str(p.get('gif_path', os.path.join(default_video_dir, default_gif_name)))
 
         # Initialize Pillow GIF writer
@@ -135,33 +146,36 @@ class Model(ap.Model):
     def step(self):
         # 0) Check for new cars to spawn
         for route_idx, spawn_times in self.car_spawn_queues.items():
-            while spawn_times and spawn_times[0] <= self._steps:
+            while spawn_times and spawn_times[0] <= self.t:
                 if self.can_spawn_safely(route_idx):
                     self.spawn_car(route_idx)
                     spawn_times.pop(0)
                 else:
                     # Can't spawn yet, try again next step
                     break
-        
-        # 1) Decision + movement for all active cars
+
+        # 1) Update traffic light states
+        self.tlcontr.step()
+
+        # 2) Decision + movement for all active cars
         for car in self.active_cars:
             car.step()
 
-        # 2) Remove cars that have completed their routes
+        # 3) Remove cars that have completed their routes
         self.remove_completed_cars()
-        
-        # 3) Check if we need to move to next interval
+
+        # 4) Check if we need to move to next interval
         self.check_new_interval()
 
-        # 4) Shared caches (collisions, TTC) 
+        # 5) Shared caches (collisions, TTC) 
         self._compute_collision_flags()
 
-        # 5) Capture every frame to GIF (offscreen)
+        # 6) Capture every frame to GIF (offscreen)
         if self.record_gif:
             self._capture_gif_frame()
 
-        # 6) Render sparsely
-        if self.render_every > 0 and (self._steps % self.render_every == 0):
+        # 7) Render sparsely
+        if self.render_every > 0 and (self.t % self.render_every == 0):
             self.plot()
 
     def plot(self):
@@ -217,7 +231,7 @@ class Model(ap.Model):
                     
                     for i in range(cars_to_spawn):
                         # Add some randomness to avoid synchronized spawns across routes
-                        spawn_step = self._steps + i * steps_between_spawns + random.randint(0, min(5, steps_between_spawns//2))
+                        spawn_step = self.t + i * steps_between_spawns + random.randint(0, min(5, steps_between_spawns//2))
                         self.car_spawn_queues[route_idx].append(spawn_step)
     
     def can_spawn_safely(self, route_idx: int) -> bool:
@@ -238,7 +252,7 @@ class Model(ap.Model):
     def spawn_car(self, route_idx: int) -> None:
         """Create a new car on the specified route."""
         route = self.routes[route_idx]
-        relevant_tlconnections = [tlc for tlc in self.tlconnections if tlc.route == route]
+        relevant_tlconnections = [tlc for tlc in self.tlconns if tlc.route == route]
         
         new_car = Car(
             self,
@@ -272,7 +286,6 @@ class Model(ap.Model):
 
     def _compute_collision_flags(self) -> None:
         """Broadphase (grid) + SAT narrowphase once per step for all cars."""
-        print("Computing collision flags...")
         cars = self.active_cars
         n = len(cars)
         if n == 0:
@@ -337,7 +350,7 @@ class Model(ap.Model):
 
     def check_new_interval(self):
         """Check if we need to move to the next time interval."""
-        interval_idx = self._steps // self.steps_per_interval
+        interval_idx = self.t // self.steps_per_interval
         if interval_idx > self.current_interval:
             self.schedule_spawns_for_interval(interval_idx)
 

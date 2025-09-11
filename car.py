@@ -42,7 +42,6 @@ class Car(ap.Agent):
     _trained_actions_idx: set[int]
     replay: Any 
 
-    _steps: int
     warmup: int
     train_every: int
 
@@ -83,8 +82,6 @@ class Car(ap.Agent):
         # Exploration: off in eval
         self.exploration_rate = 1.0 if training else 0.0
 
-        # Training schedule
-        self._steps = 0
         self.warmup = 200 if training else 0
         self.train_every = 10 if training else 0
 
@@ -118,8 +115,7 @@ class Car(ap.Agent):
         # Store + periodic train
         self.remember(state, action, reward, next_state, done)
 
-        self._steps += 1
-        if len(self.replay) >= self.warmup and self.train_every and (self._steps % self.train_every == 0):
+        if len(self.replay) >= self.warmup and self.train_every and (self.t % self.train_every == 0):
             self.train_from_replay(sample_size=256)
 
         if done:
