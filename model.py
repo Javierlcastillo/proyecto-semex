@@ -112,7 +112,16 @@ class Model(ap.Model):
 
         ### END RENDERING ###
 
-        self.TlcCtrl = TrafficLightController(self, self.TlcConn, TLCtrlMode.QLEARNING)
+        mode_key = str(getattr(self, "p", {}).get("tl_mode", "fixed")).strip().lower()
+        if mode_key in ("qlearning", "ql", "q"):
+            tl_mode = TLCtrlMode.QLEARNING
+        elif mode_key in ("fixed", "f", "static"):
+            tl_mode = TLCtrlMode.FIXED
+        else:
+            print(f"[TL] Unknown tl_mode='{mode_key}', falling back to FIXED")
+            tl_mode = TLCtrlMode.FIXED
+
+        self.TlcCtrl = TrafficLightController(self, self.TlcConn, tl_mode)
 
         self.policy_dir: str = str(p.get('policy_dir', 'checkpoints'))
 
