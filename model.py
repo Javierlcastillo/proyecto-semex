@@ -191,6 +191,26 @@ class Model(ap.Model):
         self.fig.canvas.draw_idle()      # type: ignore[union-attr]
         self.fig.canvas.flush_events()   # type: ignore[union-attr]
 
+    # --- helpers for drawing/capture ---
+    def _draw_frame(self) -> None:
+        if not self.ax:
+            return
+        
+        if self.step_text:
+            self.step_text.set_text(f"Step: {self.t}")
+
+        for car in self.active_cars:
+            car.plot(self.ax)
+
+        if self.fig:
+            self.fig.canvas.draw() # type: ignore
+
+    def _capture_gif_frame(self) -> None:
+        if self._gif_writer is None:
+            return
+        self._draw_frame()
+        self._gif_writer.grab_frame() # type: ignore
+
     def load_flow_data(self, flow_path: str):
         """Load traffic flow data from JSON file."""
         try:
@@ -267,27 +287,6 @@ class Model(ap.Model):
         
         self.active_cars.append(new_car)
         print(f"Spawned car on route {route_idx}, total active cars: {len(self.active_cars)}")
-
-    # --- helpers for drawing/capture ---
-    def _draw_frame(self) -> None:
-        if not self.ax:
-            return
-        
-        if self.step_text:
-            self.step_text.set_text(f"Step: {self.t}")
-
-        for car in self.active_cars:
-            car.plot(self.ax)
-
-        if self.fig:
-            self.fig.canvas.draw() # type: ignore
-
-    def _capture_gif_frame(self) -> None:
-        if self._gif_writer is None:
-            return
-        self._draw_frame()
-        self._gif_writer.grab_frame() # type: ignore
-    # --- end helpers ---
 
     def _compute_collision_flags(self) -> None:
         """Broadphase (grid) + SAT narrowphase once per step for all cars."""

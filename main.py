@@ -7,10 +7,10 @@ from model import Model
 os.makedirs('./videos', exist_ok=True)
 
 model = Model({ 
-    'steps': 3000,
+    'steps': 10000,
     'train': True,
 
-    'render_every': 0,
+    'render_every': 5,
 
     'policy_dir': 'checkpoints',
     'autosave_interval': 120,
