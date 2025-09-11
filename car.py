@@ -7,6 +7,7 @@ from collections import defaultdict
 from matplotlib import patches, transforms, axes
 from typing import Optional, Any, TYPE_CHECKING
 from traffic_light import TLConnection, TrafficLightState
+import random
 
 if TYPE_CHECKING:
     from model import Model

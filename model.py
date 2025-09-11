@@ -39,10 +39,16 @@ class Model(ap.Model):
 
         # Mode switches (with defaults)
         p = getattr(self, "p", {})
+        print("Model parameters:", p)
+
         self.training_enabled: bool = bool(p.get('train', True))
         render = bool(p.get('render', True))
         self.render_every: int = int(p.get('render_every', (20 if render else 0)))
+
+        print("Rendering is", "enabled" if render else "disabled", " with interval", p.get('render_every', 20 if self.render_every else 0))
+
         self.policy_dir: str = str(p.get('policy_dir', 'checkpoints'))
+
         # Only autosave during training
         self.autosave_interval: int = int(p.get('autosave_interval', (300 if self.training_enabled else 0)))
 
@@ -58,12 +64,14 @@ class Model(ap.Model):
         # Set up plotting only if rendering
         self.fig = None
         self.ax = None
+
         if self.render_every > 0:
             self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
             self.ax.set_aspect('equal')  # type: ignore
             self.ax.set_xlim(100, 700)   # type: ignore
             self.ax.set_ylim(0, 600)     # type: ignore
             plt.ion()
+            plt.show(block=False)
 
         self._step_idx = 0
 
@@ -73,12 +81,14 @@ class Model(ap.Model):
         return np.arctan2(p1[1] - p0[1], p1[0] - p0[0])
 
     def plot(self):
+        print("Rendering step", self._step_idx, self.ax)
         if not self.ax:
             return
         for car in self.cars:
             car.plot(self.ax)  # type: ignore[arg-type]
         self.fig.canvas.draw_idle()      # type: ignore[union-attr]
         self.fig.canvas.flush_events()   # type: ignore[union-attr]
+        plt.pause(0.001)                 # <-- let GUI process events
 
     def _compute_collision_flags(self) -> None:
         """Broadphase (grid) + SAT narrowphase once per step for all cars."""
@@ -142,8 +152,6 @@ class Model(ap.Model):
         # 2) Shared caches (collisions, TTC) if you have them
         if hasattr(self, "_compute_collision_flags"):
             self._compute_collision_flags()  # type: ignore
-        if hasattr(self, "_compute_ttc_cache"):
-            self._compute_ttc_cache()        # type: ignore
 
         # 3) Render sparsely
         self._step_idx += 1
