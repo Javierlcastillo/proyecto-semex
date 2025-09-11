@@ -22,7 +22,7 @@ from typing import Optional
 from matplotlib.animation import PillowWriter
 
 from traffic_light import TLConnection
-from traffic_light_controller import TrafficLightController
+from traffic_light_controller import TrafficLightController, TLCtrlMode
 
 class Model(ap.Model):
     """
@@ -42,8 +42,8 @@ class Model(ap.Model):
     collision_flags: Dict[Car, bool] = {}
 
     ### TRAFFIC LIGHT CONTROLLER ###
-    tlcontr: TrafficLightController
-    tlconns: list[TLConnection]
+    TlcCtrl: TrafficLightController
+    TlcConn: list[TLConnection]
 
     # Flow-based spawning
     flow_data: Dict[str, Any] = {}
@@ -90,9 +90,9 @@ class Model(ap.Model):
             plt.show(block=False) # type: ignore
 
         self.routes = routes
-        self.tlconns = generate_tlconnections(self.ax)
+        self.TlcConn = generate_tlconnections(self.ax)
 
-        for tlc in self.tlconns:
+        for tlc in self.TlcConn:
             tlc.traffic_light.plot()
 
         for i, route in enumerate(self.routes):
@@ -100,7 +100,7 @@ class Model(ap.Model):
 
         ### END RENDERING ###
 
-        self.tlcontr = TrafficLightController(self, self.tlconns)
+        self.TlcCtrl = TrafficLightController(self, self.TlcConn, TLCtrlMode.QLEARNING)
 
         self.policy_dir: str = str(p.get('policy_dir', 'checkpoints'))
 
@@ -155,7 +155,7 @@ class Model(ap.Model):
                     break
 
         # 1) Update traffic light states
-        self.tlcontr.step()
+        self.TlcCtrl.step()
 
         # 2) Decision + movement for all active cars
         for car in self.active_cars:
@@ -257,7 +257,7 @@ class Model(ap.Model):
     def spawn_car(self, route_idx: int) -> None:
         """Create a new car on the specified route."""
         route = self.routes[route_idx]
-        relevant_tlconnections = [tlc for tlc in self.tlconns if tlc.route == route]
+        relevant_tlconnections = [tlc for tlc in self.TlcConn if tlc.route == route]
         
         new_car = Car(
             self,

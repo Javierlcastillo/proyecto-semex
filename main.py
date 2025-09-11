@@ -7,8 +7,8 @@ from model import Model
 os.makedirs('./videos', exist_ok=True)
 
 model = Model({ 
-    'steps': 200,
-    'train': False,
+    'steps': 40,
+    'train': True,
 
     'render_every': 10,
 

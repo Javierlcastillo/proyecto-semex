@@ -115,7 +115,7 @@ class Car(ap.Agent):
         # Store + periodic train
         self.remember(state, action, reward, next_state, done)
 
-        if len(self.replay) >= self.warmup and self.train_every and (self.t % self.train_every == 0):
+        if len(self.replay) >= self.warmup and self.train_every and (self.model.t % self.train_every == 0):
             self.train_from_replay(sample_size=256)
 
         if done:
