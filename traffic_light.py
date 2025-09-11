@@ -31,7 +31,15 @@ class TrafficLight:
         self.y = y
         self.rotation = rotation
         self.ax = ax
+    @property
+    def rotation_deg(self) -> float:
+        return float(self.rotation)
 
+    @rotation_deg.setter
+
+    
+    def rotation_deg(self, val: float) -> None:
+        self.rotation = float(val)
     def plot(self):
         if self.ax is None:
             return

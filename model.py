@@ -421,7 +421,8 @@ class Model(ap.Model):
                 continue
             seen.add(tl)
             # best-effort rotation; 0 if not present
-            rot_deg = float(getattr(tl, "rotation_deg", 0.0))
+            
+            rot_deg = float(getattr(tl, "rotation", getattr(tl, "rotation_deg", 0.0)))
             lights_payload.append({
                 "light_id": str(getattr(tl, "name", id(tl))),
                 "state": str(tl.state.value),
@@ -471,14 +472,13 @@ class Model(ap.Model):
             } for car in self.active_cars
             ],
             "traffic_lights": [
-            {
-                "id": id(tl),
-                "state": tl.state.value,
-                "x": tl.x,
-                "y": tl.y
-            } for tl in set([
-                tlc.traffic_light for tlc in self.TlcConn
-            ])
+                {
+                    "id": id(tl),
+                    "state": tl.state.value,
+                    "x": tl.x,
+                    "y": tl.y,
+                    "rotation_deg": float(getattr(tl, "rotation", getattr(tl, "rotation_deg", 0.0)))
+                } for tl in set([tlc.traffic_light for tlc in self.TlcConn])
             ]
         }
 
