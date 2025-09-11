@@ -191,14 +191,17 @@ class TrafficLightController(agentpy.Agent):
         return list(TLCtrlAction)[best_idx]
     
     def _apply_action(self, tlc: TLConnection, action: TLCtrlAction) -> None:
-        """Apply the selected action to the traffic light"""
-        if action == TLCtrlAction.SET_RED:
-            tlc.traffic_light.set(TrafficLightState.RED)
-        elif action == TLCtrlAction.SET_YELLOW:
-            tlc.traffic_light.set(TrafficLightState.YELLOW)
-        elif action == TLCtrlAction.SET_GREEN:
+        """Apply the selected action to the traffic light, enforcing the sequence green → yellow → red."""
+        current_state = tlc.traffic_light.state
+
+        if action == TLCtrlAction.SET_GREEN and current_state == TrafficLightState.RED:
             tlc.traffic_light.set(TrafficLightState.GREEN)
-            
+        elif action == TLCtrlAction.SET_YELLOW and current_state == TrafficLightState.GREEN:
+            tlc.traffic_light.set(TrafficLightState.YELLOW)
+        elif action == TLCtrlAction.SET_RED and current_state == TrafficLightState.YELLOW:
+            tlc.traffic_light.set(TrafficLightState.RED)
+    # If the action does not follow the sequence, keep the current state
+    
     def _calculate_reward(self, tlc: TLConnection) -> np.float32:
         """
         Calculate reward based on traffic flow efficiency
