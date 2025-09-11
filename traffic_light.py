@@ -1,8 +1,8 @@
+# traffic_light.py
 import enum
 from route import Route
 from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
-from matplotlib.transforms import Affine2D
 from matplotlib import patches, transforms
 from typing import Optional
 
@@ -14,30 +14,15 @@ class TrafficLightState(enum.Enum):
     YELLOW = "YELLOW"
     GREEN = "GREEN"
 
+
 class TrafficLight:
     """
     A Traffic Light that lives in the Model and controls the flow of traffic.
+    Controlled by a heuristic method (no automatic timer cycling).
     """
-    id: Optional[str]  # <- declarado para el type checker
+    id: Optional[str]
     _timer: float = 0.0
     _dur = {TrafficLightState.RED: 60, TrafficLightState.GREEN: 60, TrafficLightState.YELLOW: 12}
-
-    def step(self, dt: float = 1.0) -> None:
-        self._timer += dt
-        if self._timer >= self._dur[self.state]:
-            self._timer = 0.0
-            self.state = {
-                TrafficLightState.RED:    TrafficLightState.GREEN,
-                TrafficLightState.GREEN:  TrafficLightState.YELLOW,
-                TrafficLightState.YELLOW: TrafficLightState.RED,
-            }[self.state]
-
-        if hasattr(self, "patch") and self.patch is not None:
-            self.patch.set_facecolor(self.state.value.lower())
-            self.patch.set_edgecolor("black")
-            self.patch.set_linewidth(2.0)
-            self.patch.set_zorder(Z_TRAFFIC_LIGHTS)
-
 
     state: TrafficLightState
     patch: Optional[Rectangle] = None
@@ -48,13 +33,34 @@ class TrafficLight:
     rotation: float = 0.0
 
     def __init__(self, x: float, y: float, rotation: float = 0.0):
-        self.state = TrafficLightState.RED
+        # Start GREEN so cars aren’t blocked on first frame (tune if you prefer RED)
+        self.state = TrafficLightState.GREEN
         self.x = x
         self.y = y
         self.width_px = 7.0         # visual width of the head in Python coords
         self.arm_len  = 35.0        # how far the head extends from the pivot
         self.rotation = rotation
-        self.id = None      # <- valor inicial
+        self.id = None
+        self.manual_control = True  # <— NEW: heuristic will drive the state
+
+    def step(self, dt: float = 1.0) -> None:
+        # If NOT manual_control, keep the old automatic timer cycle.
+        if not getattr(self, "manual_control", False):
+            self._timer += dt
+            if self._timer >= self._dur[self.state]:
+                self._timer = 0.0
+                self.state = {
+                    TrafficLightState.RED:    TrafficLightState.GREEN,
+                    TrafficLightState.GREEN:  TrafficLightState.YELLOW,
+                    TrafficLightState.YELLOW: TrafficLightState.RED,
+                }[self.state]
+
+        # Always update the visuals
+        if hasattr(self, "patch") and self.patch is not None:
+            self.patch.set_facecolor(self.state.value.lower())
+            self.patch.set_edgecolor("black")
+            self.patch.set_linewidth(2.0)
+            self.patch.set_zorder(30)
 
     def plot(self, ax):
         w = self.width_px
@@ -83,13 +89,61 @@ class TrafficLight:
             + ax.transData
         )
 
+    # === Heuristic controller (your sample, lightly cleaned) ===
+    def heuristic_control(self, queue, autos_en_rotonda, pairs, tl_by_id, params,
+                      cars=None, tlconnections=None, can_turn_green=True):
+        # Defaults
+        MIN_RED = params.get("MIN_RED", 30)
+        MAX_RED = params.get("MAX_RED", 120)
+        MIN_GREEN = params.get("MIN_GREEN", 60)
+        MAX_GREEN = params.get("MAX_GREEN", 120)
+        QUEUE_THRESHOLD = params.get("QUEUE_THRESHOLD", 4)
+        ROTONDA_THRESHOLD = params.get("ROTONDA_THRESHOLD", 10)
+
+        if not hasattr(self, "_timer_heuristic"):
+            self._timer_heuristic = 0
+            self._last_state = self.state
+
+        self._timer_heuristic += 1
+
+        # Example: disable pair restriction unless you fill `pairs`
+        # can_turn_green stays as provided
+
+        # Optional congestion rule (commented out):
+        # if autos_en_rotonda >= ROTONDA_THRESHOLD:
+        #     if self.state != TrafficLightState.RED:
+        #         self.state = TrafficLightState.RED
+        #         self._timer_heuristic = 0
+        #     return
+
+        # Transitions
+        if self.state == TrafficLightState.RED:
+            if queue >= QUEUE_THRESHOLD and self._timer_heuristic >= MIN_RED and can_turn_green:
+                self.state = TrafficLightState.GREEN
+                self._timer_heuristic = 0
+            elif self._timer_heuristic >= MAX_RED and can_turn_green:
+                self.state = TrafficLightState.GREEN
+                self._timer_heuristic = 0
+
+        elif self.state == TrafficLightState.GREEN:
+            if self._timer_heuristic >= MIN_GREEN:
+                if queue < QUEUE_THRESHOLD or self._timer_heuristic >= MAX_GREEN:
+                    self.state = TrafficLightState.RED
+                    self._timer_heuristic = 0
+
+        elif self.state == TrafficLightState.YELLOW:
+            if self._timer_heuristic >= 12:
+                self.state = TrafficLightState.RED
+                self._timer_heuristic = 0
+
+
 
 class TLConnection:
     """
     Assigns a traffic light to a Route and sets the range where the car should stop.
     """
     route: Route
-    s: float # The distance in the route at which the car will stop.
+    s: float  # The distance in the route at which the car will stop.
     traffic_light: TrafficLight
 
     def __init__(self, route: Route, traffic_light: TrafficLight, s: float):

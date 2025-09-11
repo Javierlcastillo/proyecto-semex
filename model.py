@@ -182,10 +182,66 @@ class Renderer(ap.Model):
         self.fig.canvas.flush_events()   # type: ignore
 
     def step(self):
+        # --- Map each traffic light to its TLConnections (to measure its queue) ---
+        tl_to_conns = {}
+        for tlc in tlconnections:
+            tl = getattr(tlc, "traffic_light", None)
+            if tl is None:
+                continue
+            tl_to_conns.setdefault(tl, []).append(tlc)
+
+        # If you ever enforce conflicts, fill this with (id_a, id_b) pairs
+        pairs = []  # e.g., [("TL_N","TL_S"), ("TL_E","TL_W")]
+        tl_by_id = {getattr(tl, "id", f"tl_{i}"): tl for i, tl in enumerate(traffic_lights)}
+
+        # --- 1) Apply the heuristic controller to each light (decide state this tick) ---
+        for tl in traffic_lights:
+            conns = tl_to_conns.get(tl, ())
+            # queue = max cars approaching this light (within 'near' meters of its stop line)
+            queue = 0
+            for tlc in conns:
+                r = getattr(tlc, "route", None)
+                if r is None:
+                    continue
+                L = float(getattr(r, "length", 0.0) or 0.0)
+                if L <= 1e-9:
+                    continue
+                near = 60.0
+                cnt = 0
+                for c in self.cars:
+                    if getattr(c, "route", None) is r:
+                        # distance along route from the car to the stop position
+                        ahead = (tlc.s - c.s) % L
+                        if 0.0 <= ahead <= near:
+                            cnt += 1
+                if cnt > queue:
+                    queue = cnt
+
+            # Call your heuristic (it sets tl.state). Empty params -> defaults inside TrafficLight.
+            if hasattr(tl, "heuristic_control"):
+                tl.heuristic_control(
+                    queue=queue,
+                    autos_en_rotonda=0,
+                    pairs=pairs,
+                    tl_by_id=tl_by_id,
+                    params={},                    # use defaults declared in TrafficLight
+                    cars=self.cars,
+                    tlconnections=tlconnections,
+                    can_turn_green=True,
+                )
+
+            # Update the visual (your tl.step should only redraw, not auto-cycle)
+            if hasattr(tl, "step"):
+                tl.step(self.dt if hasattr(self, "dt") else 1.0)
+
+        # --- 2) Move cars after lights decided their states ---
         for car in self.cars:
             if hasattr(car, "step"):
                 car.step()
-        for tl in traffic_lights:
-            if hasattr(tl, "step"):
-                tl.step()
+
+        # --- 3) Redraw frame ---
         self.plot()
+
+
+
+
