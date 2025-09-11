@@ -178,6 +178,9 @@ class Model(ap.Model):
         if self.render_every > 0 and (self.t % self.render_every == 0):
             self.plot()
 
+        # 8) Push state to clients
+        self.push_state()
+
     def plot(self):
         if not self.ax:
             return
@@ -359,11 +362,11 @@ class Model(ap.Model):
             self.schedule_spawns_for_interval(interval_idx)
 
     def push_state(self):
-        state = {
+        state: Any = {
             "cars": [
                 {
                     "id": id(car),
-                    "position": car.route.pos_at(car.s),
+                    "position": car.pos,
                     "heading": np.degrees(car.heading_in_radians),
                     "route_id": id(car.route)
                 } for car in self.active_cars

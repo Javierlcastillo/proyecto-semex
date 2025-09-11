@@ -8,9 +8,9 @@ os.makedirs('./videos', exist_ok=True)
 
 model = Model({ 
     'steps': 10000,
-    'train': True,
+    'train': True, # Por alguna razón, el código funciona mejor si está entrenando. Incluso cua
 
-    'render_every': 5,
+    'render_every': 0, # We will render only for debugging purposes, so not now.
 
     'policy_dir': 'checkpoints',
     'autosave_interval': 120,
