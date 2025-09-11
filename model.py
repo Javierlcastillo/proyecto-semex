@@ -12,6 +12,11 @@ from defined_routes import routes
 from defined_tlconnections import tlconnections
 
 from network_manager import NetManager
+import os
+import atexit
+from datetime import datetime
+from typing import Optional
+from matplotlib.animation import PillowWriter
 
 class Model(ap.Model):
     """
@@ -29,6 +34,14 @@ class Model(ap.Model):
     net: NetManager
 
     collision_flags: Dict[Car, bool] = {}
+
+    # --- Lightweight GIF recording (Pillow) ---
+    record_gif: bool = False
+    gif_path: str = ""
+    gif_fps: int = 20
+    gif_dpi: int = 100
+    _gif_writer: Optional[PillowWriter] = None
+    # --- end GIF options ---
 
     def setup(self):
         self.net = NetManager()
@@ -61,17 +74,38 @@ class Model(ap.Model):
             ) for r in self.routes
         ]
 
-        # Set up plotting only if rendering
+        # GIF params (no heavy deps)
+        self.record_gif = bool(p.get('record_gif', False))
+        self.gif_fps = int(p.get('gif_fps', 20))
+        self.gif_dpi = int(p.get('gif_dpi', 100))
+        default_video_dir = os.path.join(os.getcwd(), "videos")
+        os.makedirs(default_video_dir, exist_ok=True)
+        default_gif_name = f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}.gif"
+        self.gif_path = str(p.get('gif_path', os.path.join(default_video_dir, default_gif_name)))
+
+        # Set up plotting if rendering OR recording GIF
         self.fig = None
         self.ax = None
 
-        if self.render_every > 0:
+        if self.render_every > 0 or self.record_gif:
             self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
             self.ax.set_aspect('equal')  # type: ignore
             self.ax.set_xlim(100, 700)   # type: ignore
             self.ax.set_ylim(0, 600)     # type: ignore
-            plt.ion()
-            plt.show(block=False)
+            if self.render_every > 0:
+                plt.ion()
+                plt.show(block=False)
+
+        # Initialize Pillow GIF writer
+        if self.record_gif:
+            if self.fig is None:
+                self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
+                self.ax.set_aspect('equal')  # type: ignore
+                self.ax.set_xlim(100, 700)   # type: ignore
+                self.ax.set_ylim(0, 600)     # type: ignore
+            self._gif_writer = PillowWriter(fps=self.gif_fps)
+            self._gif_writer.setup(self.fig, self.gif_path, dpi=self.gif_dpi)
+            atexit.register(self._finalize_gif)
 
         self._step_idx = 0
 
@@ -89,6 +123,22 @@ class Model(ap.Model):
         self.fig.canvas.draw_idle()      # type: ignore[union-attr]
         self.fig.canvas.flush_events()   # type: ignore[union-attr]
         plt.pause(0.001)                 # <-- let GUI process events
+
+    # --- helpers for drawing/capture ---
+    def _draw_frame(self) -> None:
+        if not self.ax:
+            return
+        for car in self.cars:
+            car.plot(self.ax)
+        if self.fig:
+            self.fig.canvas.draw()
+
+    def _capture_gif_frame(self) -> None:
+        if self._gif_writer is None:
+            return
+        self._draw_frame()
+        self._gif_writer.grab_frame()
+    # --- end helpers ---
 
     def _compute_collision_flags(self) -> None:
         """Broadphase (grid) + SAT narrowphase once per step for all cars."""
@@ -153,7 +203,11 @@ class Model(ap.Model):
         if hasattr(self, "_compute_collision_flags"):
             self._compute_collision_flags()  # type: ignore
 
-        # 3) Render sparsely
+        # 3) Capture every frame to GIF (offscreen)
+        if self.record_gif:
+            self._capture_gif_frame()
+
+        # 4) Render sparsely
         self._step_idx += 1
         if self.render_every > 0 and (self._step_idx % self.render_every == 0):
             self.plot()
@@ -171,3 +225,13 @@ class Model(ap.Model):
         }
 
         self.net.push_state(state)
+
+    def _finalize_gif(self) -> None:
+        if self._gif_writer is not None:
+            try:
+                self._gif_writer.finish()
+                print(f"GIF saved to: {self.gif_path}")
+            except Exception as e:
+                print(f"Error finalizing GIF: {e}")
+            finally:
+                self._gif_writer = None
