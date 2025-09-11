@@ -1,188 +1,204 @@
 # model.py
 import agentpy as ap
 import numpy as np
+from typing import Tuple, Sequence, Any, cast
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
-from matplotlib import patches
 
 from route import Route
 from car import Car
 from defined_routes import routes, route_colors, route_widths, route_names
 from defined_tlconnections import tlconnections, traffic_lights
+# (TrafficLightState import not needed here)
 
-# ---------- helpers (robust + Pylance-friendly) ----------
 
-def _callable_attr(obj, names):
-    for n in names:
-        fn = getattr(obj, n, None)
-        if callable(fn):
-            return fn
-    return None
+# ---------- helpers ----------
+def _route_len(r) -> float:
+    return float(getattr(r, "length", 0.0) or 0.0)
 
-def _numeric_or_callable_value(obj, names):
-    """Return float value from an attribute or 0-arg method if possible."""
-    for n in names:
-        v = getattr(obj, n, None)
-        if v is None:
-            continue
-        try:
-            vv = v() if callable(v) else v
-            return float(vv)  # type: ignore[arg-type]
-        except Exception:
-            continue
-    return None
+def _spawn_slot_free(route, cars, s_spawn: float, min_gap: float = 25.0, car_len: float = 4.5) -> bool:
+    """Return True if there is enough headway to spawn at s_spawn on route."""
+    L = _route_len(route)
+    if L <= 0.0:
+        return False
+    for c in cars:
+        if getattr(c, "route", None) is route:
+            ahead = (c.s - s_spawn) % L
+            if ahead <= min_gap:          # a car is too close ahead
+                return False
+            if (L - ahead) <= car_len:    # a car just passed (too close behind)
+                return False
+    return True
 
-def _xy_from_point(p):
-    """Accept (x,y) lists/tuples/np arrays or objects with .x/.y/.X/.Y."""
+def _xy_of_route(r, s: float) -> Tuple[float, float]:
+    """Return (x, y) at distance s along route r. Works with .pos_at or .xy_at and
+    normalizes tuples/lists/np arrays or geometry-like objects with .x/.y."""
+    pos_at = getattr(r, "pos_at", None)
+    xy_at  = getattr(r, "xy_at", None)
+
+    fn = pos_at if callable(pos_at) else (xy_at if callable(xy_at) else None)
+    if fn is None:
+        raise AttributeError("Route has neither pos_at nor xy_at.")
+
+    pt = fn(float(s))
+
+    if hasattr(pt, "x") and hasattr(pt, "y"):
+        return float(getattr(pt, "x")), float(getattr(pt, "y"))
+
     try:
-        return float(p[0]), float(p[1])  # type: ignore[index]
+        seq = cast(Sequence[Any], pt)
+        return float(seq[0]), float(seq[1])
     except Exception:
-        if hasattr(p, "x") and hasattr(p, "y"):
-            return float(getattr(p, "x")), float(getattr(p, "y"))
-        if hasattr(p, "X") and hasattr(p, "Y"):
-            return float(getattr(p, "X")), float(getattr(p, "Y"))
-        a = np.asarray(p).ravel()
-        return float(a[0]), float(a[1])
+        pass
 
-def _xy_list(pts):
-    return [_xy_from_point(p) for p in pts]
+    try:
+        return float(pt["x"]), float(pt["y"])  # type: ignore[index]
+    except Exception:
+        pass
 
-def _get_polyline(route: Route):
-    """
-    Return a list of (x,y) for plotting. Tries common containers first,
-    then samples using pos_at() + length if needed.
-    """
-    for name in ("polyline", "points", "pts", "waypoints"):
-        pts = getattr(route, name, None)
-        if pts is not None:
-            try:
-                return _xy_list(pts)
-            except Exception:
-                pass
-
-    pos_at = _callable_attr(route, ("pos_at", "posAt", "point_at", "pointAt",
-                                    "position_at", "positionAt", "eval"))
-    if pos_at:
-        L = _numeric_or_callable_value(route, ("length", "L", "total_length",
-                                               "arc_length", "arclength", "len"))
-        if L is None:
-            L = 200.0  # fallback
-        n = max(50, int(float(L) * 2))
-        ss = np.linspace(0.0, float(L), n)
-        pts = []
-        for s in ss:
-            try:
-                pt = pos_at(float(s))  # type: ignore[misc]
-                pts.append(_xy_from_point(pt))
-            except Exception:
-                continue
-        if pts:
-            return pts
-
-    return []
+    raise TypeError("Expected point-like return (x,y), object with .x/.y, or mapping with 'x'/'y'.")
 
 
-# ---------- Model ----------
-
+# ---------------- Renderer ----------------
 class Renderer(ap.Model):
-    """Renders routes, traffic lights and cars."""
-
-    fig: Figure
-    ax: Axes
-
-    routes: list[Route]
-    car_patches: list[patches.Rectangle] = []
+    """AgentPy model + Matplotlib renderer. Heuristic controls lights. No pair constraints."""
 
     def setup(self):
-        # Data
-        self.routes = routes
+        # --- params ---
+        p = self.p
+        self.dt = float(p.get('dt', 1.0))
 
-        # Build cars with TL connections (your code here)
-        self.cars = []
-        for r in self.routes:
-            conns = [tlc for tlc in tlconnections if tlc.route is r]
-            cid = len(self.cars)  # simple unique id
-            q = getattr(self, "q_learner", None)
-            self.cars.append(Car(self, r, conns, cid, q))
+        # Container for cars
+        self.cars = ap.AgentList(self, 0, Car)
 
-        # Figure / Axes
-        self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
-        self.ax.set_aspect("equal")
+        # Give each TL a stable id if missing
+        for i, tl in enumerate(traffic_lights):
+            if getattr(tl, "id", None) in (None, ""):
+                tl.id = f"TL_{i}"
 
-        # draws the small rectangle at (tl.x, tl.y) with tl.rotation    
+        # --- figure/axes ---
+        self.fig: Figure = plt.figure(figsize=(9, 9))  # type: ignore
+        self.ax: Axes = self.fig.add_subplot(1, 1, 1)  # type: ignore
+        self.ax.set_aspect('equal', adjustable='box')
+
+        # Draw routes and traffic lights
+        self._plot_routes_background()
         for tl in traffic_lights:
             tl.plot(self.ax)
-            
 
-        # --- Compute bounds from the actual routes and zoom out automatically ---
+        # Bounds
+        self._auto_bounds()
 
-        def _bounds(rs, samples_per_route: int = 400):
-            xs, ys = [], []
-            for rt in rs:
-                L = getattr(rt, "length", 0.0)
-                if L <= 0:
-                    continue
-                s_vals = np.linspace(0.0, L, samples_per_route)
-                for s in s_vals:
-                    x, y = rt.pos_at(float(s))
-                    xs.append(x); ys.append(y)
-            if not xs:   # fallback
-                return (0, 1, 0, 1)
-            return (min(xs), max(xs), min(ys), max(ys))
+        # --- stochastic spawner (to avoid periodic sync) ---
+        self.rng = np.random.default_rng()
+        self.MAX_CARS = int(p.get("MAX_CARS", 80))               # global cap
+        self.HEADWAY_MEAN = float(p.get("HEADWAY_MEAN", 12.0))   # avg seconds between arrivals per route
+        self.SPAWN_S = float(p.get("SPAWN_S", 0.0))              # spawn position (s) on each route
+        self.MIN_GAP = float(p.get("MIN_GAP", 25.0))             # forward gap required to spawn
+        self.CAR_LEN = float(p.get("CAR_LEN", 4.5))              # overlap tolerance behind
+        self.SPEED_MIN = float(p.get("SPEED_MIN", 3.5))
+        self.SPEED_MAX = float(p.get("SPEED_MAX", 6.5))
 
-        xmin, xmax, ymin, ymax = _bounds(self.routes)
-        pad = 0.10 * max(xmax - xmin, ymax - ymin)  # 10% padding
-        self.ax.set_xlim(xmin - pad, xmax + pad)
-        self.ax.set_ylim(ymin - pad, ymax + pad)
+        # one ETA per route index (avoid using Route as dict key)
+        self._spawn_eta = [0.0] * len(routes)
+        for i, _r in enumerate(routes):
+            jitter = float(self.rng.uniform(0.0, self.HEADWAY_MEAN))
+            self._spawn_eta[i] = float(self.rng.exponential(self.HEADWAY_MEAN) + jitter)
 
-        # (Optional) debug overlay to see starts/ends + current car positions
-        for i, r in enumerate(self.routes):
-            x0, y0 = r.pos_at(0.0)
-            xL, yL = r.pos_at(getattr(r, "length", 0.0))
-            self.ax.scatter([x0, xL], [y0, yL], s=40, edgecolors="k", zorder=5)
-        for c in self.cars:
-            x, y = c.position
-            self.ax.scatter([x], [y], s=60, facecolors="none", edgecolors="k", zorder=6)
+        # live updates
+        try:
+            plt.ion()
+            self.fig.canvas.draw_idle()
+            self.fig.canvas.flush_events()
+            plt.pause(0.001)
+        except Exception:
+            pass
 
-
-        # Plot routes directly (colors/widths from Unity meta)
-        default_palette = [
-            "#FFD200", "#FF3B30", "#34C759", "#5856D6",
-            "#A2845E", "#00BCD4", "#FF2D55", "#1E90FF"
-        ]
-
-        for i, r in enumerate(self.routes):
-            c  = route_colors[i] if i < len(route_colors) else default_palette[i % len(default_palette)]
-            lw = route_widths[i] if i < len(route_widths) else 2.0
-
-            pts = _get_polyline(r)
-            if not pts:
-                continue
-            xs = [p[0] for p in pts]
-            ys = [p[1] for p in pts]
-            self.ax.plot(xs, ys, color=c, linewidth=lw)
-
-            
+    # ---------- plotting ----------
+    def _plot_routes_background(self):
         for i, r in enumerate(routes):
-            print(i, getattr(r, "name", f"route_{i}"), r.length)
-        # Traffic lights
-        for tlc in tlconnections:
-            if hasattr(tlc, "traffic_light") and hasattr(tlc.traffic_light, "plot"):
-                tlc.traffic_light.plot(self.ax)
+            color = route_colors[i] if i < len(route_colors) else 'gray'
+            width = route_widths[i] if i < len(route_widths) else 2.0
+            L = _route_len(r)
+            if L <= 0:
+                continue
+            s_vals = np.linspace(0.0, L, 150, dtype=float)
+            xs, ys = [], []
+            for s in s_vals:
+                x, y = _xy_of_route(r, float(s))
+                xs.append(x); ys.append(y)
+            self.ax.plot(xs, ys, '-', color=color, linewidth=width, alpha=0.85, zorder=1)
+            if i < len(route_names):
+                xm, ym = _xy_of_route(r, 0.5 * L)
+                self.ax.text(xm, ym, route_names[i], fontsize=7, color=color, alpha=0.7)
 
-        self.fig.show()
+    def _auto_bounds(self):
+        xs, ys = [], []
+        for r in routes:
+            L = _route_len(r)
+            if L <= 0:
+                continue
+            for s in np.linspace(0.0, L, 300, dtype=float):
+                x, y = _xy_of_route(r, float(s))
+                xs.append(x); ys.append(y)
+        if xs and ys:
+            xmin, xmax = min(xs), max(xs)
+            ymin, ymax = min(ys), max(ys)
+            pad = 0.05 * max(xmax - xmin, ymax - ymin, 1.0)
+            self.ax.set_xlim(xmin - pad, xmax + pad)
+            self.ax.set_ylim(ymin - pad, ymax + pad)
+            self.ax.grid(True, alpha=0.2, zorder=0)
 
     def plot(self):
-        # Draw cars at current positions
         for car in self.cars:
             if hasattr(car, "plot"):
                 car.plot(self.ax)
-        self.fig.canvas.draw_idle()      # type: ignore
-        self.fig.canvas.flush_events()   # type: ignore
+        for tl in traffic_lights:
+            if hasattr(tl, "patch") and tl.patch is not None:
+                tl.patch.set_zorder(30)
+        try:
+            self.fig.canvas.draw_idle()      # type: ignore
+            self.fig.canvas.flush_events()   # type: ignore
+            plt.pause(0.001)
+        except Exception:
+            pass
 
+    # ---------- convenience ----------
+    def spawn_car(self, route, s: float | None = None, ds: float | None = None, **kwargs):
+        """Create and register a car on a given route; returns the car."""
+        conns = [tlc for tlc in tlconnections if tlc.route is route]
+        cid = len(self.cars)
+        q = getattr(self, "q_learner", None)
+        car = Car(self, route, conns, cid, q)
+        if s is not None:
+            car.s = float(s)
+            car.position = _xy_of_route(route, car.s)
+        if ds is not None:
+            car.ds = float(ds)
+        self.cars.append(car)
+        if hasattr(car, "plot"):
+            car.plot(self.ax)
+        return car
+
+    # ---------- main tick ----------
     def step(self):
-        # --- Map each traffic light to its TLConnections (to measure its queue) ---
+        # --- stochastic arrivals (Poisson-like per route) ---
+        dt = self.dt if hasattr(self, "dt") else 1.0
+        if len(self.cars) < self.MAX_CARS:
+            for i, r in enumerate(routes):
+                L = _route_len(r)
+                if L <= 0.0:
+                    continue
+                self._spawn_eta[i] -= dt
+                while self._spawn_eta[i] <= 0.0 and len(self.cars) < self.MAX_CARS:
+                    s0 = (self.SPAWN_S + float(self.rng.uniform(0.0, 2.5))) % L
+                    if _spawn_slot_free(r, self.cars, s0, self.MIN_GAP, self.CAR_LEN):
+                        ds = float(self.rng.uniform(self.SPEED_MIN, self.SPEED_MAX))
+                        self.spawn_car(r, s=s0, ds=ds)
+                    self._spawn_eta[i] += float(self.rng.exponential(self.HEADWAY_MEAN))
+
+        # --- Map TL -> its TLConnections ---
         tl_to_conns = {}
         for tlc in tlconnections:
             tl = getattr(tlc, "traffic_light", None)
@@ -190,58 +206,57 @@ class Renderer(ap.Model):
                 continue
             tl_to_conns.setdefault(tl, []).append(tlc)
 
-        # If you ever enforce conflicts, fill this with (id_a, id_b) pairs
-        pairs = []  # e.g., [("TL_N","TL_S"), ("TL_E","TL_W")]
-        tl_by_id = {getattr(tl, "id", f"tl_{i}"): tl for i, tl in enumerate(traffic_lights)}
-
-        # --- 1) Apply the heuristic controller to each light (decide state this tick) ---
-        for tl in traffic_lights:
-            conns = tl_to_conns.get(tl, ())
-            # queue = max cars approaching this light (within 'near' meters of its stop line)
+        # --- Compute queues for each TL (max cars within 'near' of any approach stop line) ---
+        q_by_tl = {}
+        near = 60.0
+        for tl, conns in tl_to_conns.items():
             queue = 0
             for tlc in conns:
                 r = getattr(tlc, "route", None)
                 if r is None:
                     continue
-                L = float(getattr(r, "length", 0.0) or 0.0)
+                L = _route_len(r)
                 if L <= 1e-9:
                     continue
-                near = 60.0
                 cnt = 0
                 for c in self.cars:
                     if getattr(c, "route", None) is r:
-                        # distance along route from the car to the stop position
                         ahead = (tlc.s - c.s) % L
                         if 0.0 <= ahead <= near:
                             cnt += 1
                 if cnt > queue:
                     queue = cnt
+            q_by_tl[tl] = queue
 
-            # Call your heuristic (it sets tl.state). Empty params -> defaults inside TrafficLight.
+        # --- Apply heuristic for each TL (no pair constraints, no gating) ---
+        tl_by_id = {getattr(tl, "id", f"tl_{i}"): tl for i, tl in enumerate(traffic_lights)}
+        for tl in traffic_lights:
+            queue = q_by_tl.get(tl, 0)
             if hasattr(tl, "heuristic_control"):
                 tl.heuristic_control(
                     queue=queue,
                     autos_en_rotonda=0,
-                    pairs=pairs,
+                    pairs=[],  # no explicit conflict pairs here
                     tl_by_id=tl_by_id,
-                    params={},                    # use defaults declared in TrafficLight
+                    params={},  # use defaults inside TrafficLight
                     cars=self.cars,
                     tlconnections=tlconnections,
                     can_turn_green=True,
                 )
-
-            # Update the visual (your tl.step should only redraw, not auto-cycle)
             if hasattr(tl, "step"):
-                tl.step(self.dt if hasattr(self, "dt") else 1.0)
+                tl.step(dt)
 
-        # --- 2) Move cars after lights decided their states ---
+        # --- Move cars AFTER lights decided their states ---
         for car in self.cars:
             if hasattr(car, "step"):
                 car.step()
 
-        # --- 3) Redraw frame ---
+        # --- Redraw frame ---
         self.plot()
 
-
-
-
+    def after(self):
+        try:
+            plt.ioff()
+            plt.show()
+        except Exception:
+            pass
