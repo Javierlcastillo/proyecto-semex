@@ -30,6 +30,7 @@ class Model(ap.Model):
     """
     fig: Optional[Figure] = None
     ax: Optional[Axes] = None
+    step_text = None
 
     routes: list[Route]
     car_patches: list[patches.Rectangle] = []
@@ -83,6 +84,7 @@ class Model(ap.Model):
             self.ax.set_aspect('equal')  # type: ignore
             self.ax.set_xlim(100, 700)   # type: ignore
             self.ax.set_ylim(0, 600)     # type: ignore
+            self.step_text = self.ax.text(105, 595, f"Step: {self.t}", fontsize=12, bbox=dict(facecolor='white', alpha=0.7))  # type: ignore
 
             plt.ion() # type: ignore
             plt.show(block=False) # type: ignore
@@ -97,8 +99,6 @@ class Model(ap.Model):
             route.plot(self.ax, color=route_colors[i] if i < len(route_colors) else "black")
 
         ### END RENDERING ###
-
-        
 
         self.tlcontr = TrafficLightController(self, self.tlconns)
 
@@ -181,8 +181,13 @@ class Model(ap.Model):
     def plot(self):
         if not self.ax:
             return
+        
+        if self.step_text:
+            self.step_text.set_text(f"Step: {self.t}")
+
         for car in self.active_cars:
             car.plot(self.ax)
+
         self.fig.canvas.draw_idle()      # type: ignore[union-attr]
         self.fig.canvas.flush_events()   # type: ignore[union-attr]
 
@@ -263,25 +268,25 @@ class Model(ap.Model):
         self.active_cars.append(new_car)
         print(f"Spawned car on route {route_idx}, total active cars: {len(self.active_cars)}")
 
-    def _heading(self, car: Car) -> float:
-        p0 = car.route.pos_at(car.s)
-        p1 = car.route.pos_at(car.s + car.ds)
-        return np.arctan2(p1[1] - p0[1], p1[0] - p0[0])
-
     # --- helpers for drawing/capture ---
     def _draw_frame(self) -> None:
         if not self.ax:
             return
+        
+        if self.step_text:
+            self.step_text.set_text(f"Step: {self.t}")
+
         for car in self.active_cars:
             car.plot(self.ax)
+
         if self.fig:
-            self.fig.canvas.draw()
+            self.fig.canvas.draw() # type: ignore
 
     def _capture_gif_frame(self) -> None:
         if self._gif_writer is None:
             return
         self._draw_frame()
-        self._gif_writer.grab_frame()
+        self._gif_writer.grab_frame() # type: ignore
     # --- end helpers ---
 
     def _compute_collision_flags(self) -> None:
@@ -360,7 +365,7 @@ class Model(ap.Model):
                 {
                     "id": id(car),
                     "position": car.route.pos_at(car.s),
-                    "heading": self._heading(car),
+                    "heading": np.degrees(car.heading_in_radians),
                     "route_id": id(car.route)
                 } for car in self.active_cars
             ],
