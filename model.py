@@ -11,8 +11,8 @@ from matplotlib import patches
 from route import Route
 from car import Car
 
-from defined_routes import routes
-from defined_tlconnections import tlconnections
+from defined_routes import routes, route_colors
+from defined_tlconnections import tlconnections, traffic_lights
 
 from network_manager import NetManager
 import os
@@ -25,13 +25,12 @@ class Model(ap.Model):
     """
     Minimal model that keeps arrays of agents moving along assigned routes.
     """
-    fig: Figure
-    ax: Axes
-    
+    fig: Optional[Figure] = None
+    ax: Optional[Axes] = None
+
     routes: list[Route]
     car_patches: list[patches.Rectangle] = []
 
-    _step_idx: int = 0
     render_every: int = 10
 
     net: NetManager
@@ -65,11 +64,32 @@ class Model(ap.Model):
         p = getattr(self, "p", {})
         print("Model parameters:", p)
 
+        # Training enabled?
         self.training_enabled: bool = bool(p.get('train', True))
-        render = bool(p.get('render', True))
-        self.render_every: int = int(p.get('render_every', (20 if render else 0)))
 
-        print("Rendering is", "enabled" if render else "disabled", " with interval", p.get('render_every', 20 if self.render_every else 0))
+        ### RENDERING ###
+        self.render_every: int = int(p.get('render_every', 0)) 
+        rendering = self.render_every > 0
+
+        print("Rendering is", "enabled" if rendering else "disabled", " with interval", self.render_every)
+
+        # Set up plotting if rendering OR recording GIF
+        if rendering or self.record_gif:
+            self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
+            self.ax.set_aspect('equal')  # type: ignore
+            self.ax.set_xlim(100, 700)   # type: ignore
+            self.ax.set_ylim(0, 600)     # type: ignore
+
+            plt.ion() # type: ignore
+            plt.show(block=False) # type: ignore
+
+            for tl in traffic_lights:
+                tl.plot(self.ax)
+
+            for i, r in enumerate(self.routes):
+                r.plot(self.ax, color=route_colors[i] if i < len(route_colors) else "black")
+
+        ### END RENDERING ###
 
         self.policy_dir: str = str(p.get('policy_dir', 'checkpoints'))
 
@@ -77,7 +97,7 @@ class Model(ap.Model):
         self.autosave_interval: int = int(p.get('autosave_interval', (300 if self.training_enabled else 0)))
 
         # Load flow data
-        flow_path = p.get('flow_path', 'traffic_flow.json')
+        flow_path = p.get('flow_path', 'data/traffic_flow.json')
         self.load_flow_data(flow_path)
         
         # Initialize active cars list and spawn queues
@@ -98,21 +118,8 @@ class Model(ap.Model):
         self.gif_dpi = int(p.get('gif_dpi', 100))
         default_video_dir = os.path.join(os.getcwd(), "videos")
         os.makedirs(default_video_dir, exist_ok=True)
-        default_gif_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{self._step_idx}steps.gif"
+        default_gif_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{self._steps}steps.gif"
         self.gif_path = str(p.get('gif_path', os.path.join(default_video_dir, default_gif_name)))
-
-        # Set up plotting if rendering OR recording GIF
-        self.fig = None
-        self.ax = None
-
-        if self.render_every > 0 or self.record_gif:
-            self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
-            self.ax.set_aspect('equal')  # type: ignore
-            self.ax.set_xlim(100, 700)   # type: ignore
-            self.ax.set_ylim(0, 600)     # type: ignore
-            if self.render_every > 0:
-                plt.ion()
-                plt.show(block=False)
 
         # Initialize Pillow GIF writer
         if self.record_gif:
@@ -125,7 +132,45 @@ class Model(ap.Model):
             self._gif_writer.setup(self.fig, self.gif_path, dpi=self.gif_dpi)
             atexit.register(self._finalize_gif)
 
-        self._step_idx = 0
+    def step(self):
+        # 0) Check for new cars to spawn
+        for route_idx, spawn_times in self.car_spawn_queues.items():
+            while spawn_times and spawn_times[0] <= self._steps:
+                if self.can_spawn_safely(route_idx):
+                    self.spawn_car(route_idx)
+                    spawn_times.pop(0)
+                else:
+                    # Can't spawn yet, try again next step
+                    break
+        
+        # 1) Decision + movement for all active cars
+        for car in self.active_cars:
+            car.step()
+
+        # 2) Remove cars that have completed their routes
+        self.remove_completed_cars()
+        
+        # 3) Check if we need to move to next interval
+        self.check_new_interval()
+
+        # 4) Shared caches (collisions, TTC) 
+        self._compute_collision_flags()
+
+        # 5) Capture every frame to GIF (offscreen)
+        if self.record_gif:
+            self._capture_gif_frame()
+
+        # 6) Render sparsely
+        if self.render_every > 0 and (self._steps % self.render_every == 0):
+            self.plot()
+
+    def plot(self):
+        if not self.ax:
+            return
+        for car in self.active_cars:
+            car.plot(self.ax)
+        self.fig.canvas.draw_idle()      # type: ignore[union-attr]
+        self.fig.canvas.flush_events()   # type: ignore[union-attr]
 
     def load_flow_data(self, flow_path: str):
         """Load traffic flow data from JSON file."""
@@ -157,7 +202,7 @@ class Model(ap.Model):
             queue.clear()
             
         # Schedule spawns for each route
-        for route_idx, route in enumerate(self.routes):
+        for route_idx, _route in enumerate(self.routes):
             route_key = f"route{route_idx}"
             if route_key in self.flow_data["routes"]:
                 cars_to_spawn = self.flow_data["routes"][route_key][interval_idx]
@@ -172,7 +217,7 @@ class Model(ap.Model):
                     
                     for i in range(cars_to_spawn):
                         # Add some randomness to avoid synchronized spawns across routes
-                        spawn_step = self._step_idx + i * steps_between_spawns + random.randint(0, min(5, steps_between_spawns//2))
+                        spawn_step = self._steps + i * steps_between_spawns + random.randint(0, min(5, steps_between_spawns//2))
                         self.car_spawn_queues[route_idx].append(spawn_step)
     
     def can_spawn_safely(self, route_idx: int) -> bool:
@@ -209,16 +254,6 @@ class Model(ap.Model):
         p1 = car.route.pos_at(car.s + car.ds)
         return np.arctan2(p1[1] - p0[1], p1[0] - p0[0])
 
-    def plot(self):
-        print("Rendering step", self._step_idx, self.ax)
-        if not self.ax:
-            return
-        for car in self.active_cars:
-            car.plot(self.ax)  # type: ignore[arg-type]
-        self.fig.canvas.draw_idle()      # type: ignore[union-attr]
-        self.fig.canvas.flush_events()   # type: ignore[union-attr]
-        plt.pause(0.001)                 # <-- let GUI process events
-
     # --- helpers for drawing/capture ---
     def _draw_frame(self) -> None:
         if not self.ax:
@@ -237,6 +272,7 @@ class Model(ap.Model):
 
     def _compute_collision_flags(self) -> None:
         """Broadphase (grid) + SAT narrowphase once per step for all cars."""
+        print("Computing collision flags...")
         cars = self.active_cars
         n = len(cars)
         if n == 0:
@@ -301,43 +337,9 @@ class Model(ap.Model):
 
     def check_new_interval(self):
         """Check if we need to move to the next time interval."""
-        interval_idx = self._step_idx // self.steps_per_interval
+        interval_idx = self._steps // self.steps_per_interval
         if interval_idx > self.current_interval:
             self.schedule_spawns_for_interval(interval_idx)
-
-    def step(self):
-        # 0) Check for new cars to spawn
-        for route_idx, spawn_times in self.car_spawn_queues.items():
-            while spawn_times and spawn_times[0] <= self._step_idx:
-                if self.can_spawn_safely(route_idx):
-                    self.spawn_car(route_idx)
-                    spawn_times.pop(0)
-                else:
-                    # Can't spawn yet, try again next step
-                    break
-        
-        # 1) Decision + movement for all active cars
-        for car in self.active_cars:
-            car.step()
-
-        # 2) Remove cars that have completed their routes
-        self.remove_completed_cars()
-        
-        # 3) Check if we need to move to next interval
-        self.check_new_interval()
-
-        # 4) Shared caches (collisions, TTC) 
-        if hasattr(self, "_compute_collision_flags"):
-            self._compute_collision_flags()
-
-        # 5) Capture every frame to GIF (offscreen)
-        if self.record_gif:
-            self._capture_gif_frame()
-
-        # 6) Render sparsely
-        self._step_idx += 1
-        if self.render_every > 0 and (self._step_idx % self.render_every == 0):
-            self.plot()
 
     def push_state(self):
         state = {

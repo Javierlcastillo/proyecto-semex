@@ -1,16 +1,17 @@
 import datetime
-import matplotlib
 import os
-matplotlib.use('Agg')  # or 'QtAgg' if you have PyQt/PySide installed
+
 from model import Model
 
 # Create videos directory if it doesn't exist
 os.makedirs('./videos', exist_ok=True)
 
 model = Model({ 
-    'steps': 2000,
-    'train': False,
-    'render': False,
+    'steps': 400,
+    'train': True,
+
+    'render_every': 20,
+
     'policy_dir': 'checkpoints',
     'autosave_interval': 60,
 
@@ -20,4 +21,5 @@ model = Model({
 
     'flow_path': 'traffic_flow.json',
 })
-model.run()
+
+model.run() # type: ignore

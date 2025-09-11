@@ -12,7 +12,9 @@ except Exception:
     ExtraTreesRegressor = None  # type: ignore
     joblib = None  # type: ignore
 
-N_ESTIMS = 32
+### Constants
+N_ESTIMS = 16
+FILENAME = "fqi-" + str(N_ESTIMS) + "_estimators.joblib"
 
 # Singleton state
 _models: Optional[Dict[int, Any]] = None
@@ -92,14 +94,14 @@ def save(dirpath: str) -> None:
         "replay": list(_replay),
         "replay_maxlen": _replay.maxlen or 20000,
     }
-    joblib.dump(snap, os.path.join(dirpath, "fqi-" + str(N_ESTIMS) + "_estimators.joblib"))
+    joblib.dump(snap, os.path.join(dirpath, FILENAME))
 
 def load(dirpath: str) -> None:
     """Load models, trained set, and replay buffer from a directory."""
     global _models, _trained, _replay
     if joblib is None:
         raise RuntimeError("joblib is required to load models. Install with: py -m pip install joblib")
-    p = os.path.join(dirpath, "fqi.joblib")
+    p = os.path.join(dirpath, FILENAME)
     if not os.path.exists(p):
         raise FileNotFoundError(p)
     snap: _Snapshot = joblib.load(p)
@@ -140,7 +142,7 @@ def enable_autosave(dirpath: str, interval_sec: int | None = 60) -> None:
 def bootstrap(dirpath: str, num_actions: int, *, autosave_interval: int = 300) -> None:
     """Load if checkpoint exists; else init fresh. Then enable autosave."""
     os.makedirs(dirpath, exist_ok=True)
-    ckpt = os.path.join(dirpath, "fqi.joblib")
+    ckpt = os.path.join(dirpath, FILENAME)
     if os.path.exists(ckpt):
         load(dirpath)
     else:

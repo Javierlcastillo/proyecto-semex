@@ -28,7 +28,7 @@ class Car(ap.Agent):
     width: float
     height: float
 
-    patch: Optional[patches.Rectangle] = None
+    patch: Optional[patches.Polygon] = None
 
     # Q-Learning attributes
     q_table: defaultdict[tuple, np.ndarray]
@@ -135,19 +135,19 @@ class Car(ap.Agent):
         self.ds = max(0.0, np.random.uniform(0.5, 2.0))
 
     def plot(self, ax: axes.Axes):
-        x, y = self.pos
-        theta = self.heading_in_radians
+        corners = self.corners
         if self.patch is None:
-            self.patch = patches.Rectangle(
-                (x - self.width/2, y - self.height/2),
-                self.width, self.height,
-                facecolor = 'red' if self.is_colliding else 'tab:blue', alpha=0.9, zorder=2
+            self.patch = patches.Polygon(
+                corners,
+                closed=True,
+                facecolor='red' if self.is_colliding else 'tab:blue',
+                alpha=0.9,
+                zorder=2
             )
             ax.add_patch(self.patch)
-        # Update position and rotation only (reuse artist)
-        tr = transforms.Affine2D().rotate_around(x, y, theta) + ax.transData
-        self.patch.set_xy((x - self.width/2, y - self.height/2))
-        self.patch.set_transform(tr)
+        else:
+            self.patch.set_xy(corners)
+        # No need for rotation transform; corners are already rotated
 
     @property
     def heading_in_radians(self) -> float:

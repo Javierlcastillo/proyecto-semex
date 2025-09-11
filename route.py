@@ -84,7 +84,7 @@ class Route:
         return _interpolate_points(self._points, s, self._cumulative_lengths)
     
     def plot(self, ax: Axes, color: str = 'black'):
-        pts = self.sample_even(400)
+        pts = self.sample_even(500)
         ax.plot(pts[:,0], pts[:,1], color=color, linewidth=2, zorder=1) # type: ignore
 
     @classmethod
