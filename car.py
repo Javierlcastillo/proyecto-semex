@@ -90,11 +90,14 @@ class Car(ap.Agent):
             # forward distance along the route from car.s to the stop line
             ahead = (c.s - self.s) % L          # in [0, L)
             if ahead <= WINDOW:
-                if c.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
-                    # hold position this tick
+                # Solo se detiene si el semáforo está en rojo o amarillo
+                if c.traffic_light.state == TrafficLightState.RED or c.traffic_light.state == TrafficLightState.YELLOW:
                     self.position = self.route.pos_at(self.s)
                     self.state = "stop"
                     return
+                # Si está en verde, puede avanzar
+                elif c.traffic_light.state == TrafficLightState.GREEN:
+                    self.state = "moving"
 
         # --- stop if blocked by another car ahead ---
         # Busca autos en la misma ruta, adelante y suficientemente cerca
@@ -114,36 +117,37 @@ class Car(ap.Agent):
         if blocked:
             return
 
-        # Si estaba en stop, verifica si puede avanzar por semáforo verde o espacio libre
+        # Si estaba en stop, verifica si puede avanzar por semáforo verde y espacio libre
         if self.state == "stop":
             can_move = True
             # Verifica semáforo
             for c in self.tlconnections:
                 ahead = (c.s - self.s) % L
                 if ahead <= WINDOW:
-                    if c.traffic_light.state in (TrafficLightState.RED, TrafficLightState.YELLOW):
+                    if c.traffic_light.state == TrafficLightState.GREEN:
+                        self.state = "moving"
+                        break
+                    else:
                         can_move = False
                         break
-            # Verifica espacio libre adelante
-            if can_move and hasattr(self, 'model') and hasattr(self.model, 'cars'):
+            # Verifica espacio libre adelante solo si el semáforo está en verde
+            if self.state == "moving" and hasattr(self, 'model') and hasattr(self.model, 'cars'):
                 BLOCK_DIST = 10.0
                 for other in self.model.cars:
                     if other is self:
                         continue
                     if other.route == self.route and 0 < (other.s - self.s) < BLOCK_DIST:
                         if getattr(other, 'state', None) == "stop":
-                            can_move = False
+                            self.state = "stop"
                             break
-            if can_move:
-                self.state = "moving"
 
         # --- normal advance ---
-        if self.state == "moving":
-            self.s += self.ds
-            if self.s >= L:
-                self.s -= L
-            self.position = self.route.pos_at(self.s)
-            self.angle = self.heading()
+        #if self.state == "moving":
+        self.s += self.ds
+        if self.s >= L:
+            self.s -= L
+        self.position = self.route.pos_at(self.s)
+        self.angle = self.heading()
 
 
     def plot(self, ax: axes.Axes):

@@ -121,6 +121,7 @@ class Renderer(ap.Model):
 
         # draws the small rectangle at (tl.x, tl.y) with tl.rotation    
         for tl in traffic_lights:
+            print("Plotting traffic", tl.id," light at", tl.x, tl.y, "rotation", tl.rotation)
             tl.plot(self.ax)
             
 
@@ -229,14 +230,69 @@ class Renderer(ap.Model):
         
         self.current_step += 1
 
-        # 2) Avanza semáforos si tienes objetos con step()
-        # Fuerza todos los semáforos a rojo para pruebas
+        # 2) Lógica heurística de semáforos con exclusión robusta de pares
+        params = {
+            "MIN_RED": 30,
+            "MAX_RED": 120,
+            "MIN_GREEN": 60,
+            "MAX_GREEN": 120,
+            "QUEUE_THRESHOLD": 4,
+            "ROTONDA_THRESHOLD": 10,
+        }
+        queues = self.get_queues_by_traffic_light(self.cars, tlconnections)
+        autos_en_rotonda = sum(1 for car in self.cars if getattr(car.route, "is_rotonda", False))
+        pairs = [
+            ("TrafficLight_Animated1", "TrafficLight_Animated2"),
+            ("TrafficLight_Animated4", "TrafficLight_Animated5"),
+        ]
+        tl_by_id = {getattr(tl, "id", None): tl for tl in (globals().get("traffic_lights") or [])}
+
+        # Para cada par, decide cuál puede cambiar a verde
+        can_turn_green_dict = {getattr(tl, "id", None): True for tl in (globals().get("traffic_lights") or [])}
+        if not hasattr(self, "_pair_toggle"):  # Alternancia para desempate
+            self._pair_toggle = {pair: 0 for pair in pairs}
+        for idx, (id1, id2) in enumerate(pairs):
+            tl1 = tl_by_id.get(id1)
+            tl2 = tl_by_id.get(id2)
+            q1 = queues.get(id1, 0)
+            q2 = queues.get(id2, 0)
+            from traffic_light import TrafficLightState
+            if tl1 and tl2:
+                if tl1.state == tl2.state == TrafficLightState.RED:
+                    # Prioridad al que tiene más cola
+                    if q1 > q2:
+                        can_turn_green_dict[id1] = True
+                        can_turn_green_dict[id2] = False
+                    elif q2 > q1:
+                        can_turn_green_dict[id1] = False
+                        can_turn_green_dict[id2] = True
+                    else:
+                        # Si igual cola, alterna prioridad cada vez
+                        toggle = self._pair_toggle[(id1, id2)]
+                        if toggle == 0:
+                            can_turn_green_dict[id1] = True
+                            can_turn_green_dict[id2] = False
+                        else:
+                            can_turn_green_dict[id1] = False
+                            can_turn_green_dict[id2] = True
+                        self._pair_toggle[(id1, id2)] = 1 - toggle
+                else:
+                    # Si uno ya está en verde, el otro no puede
+                    if tl1.state == TrafficLightState.GREEN:
+                        can_turn_green_dict[id2] = False
+                    if tl2.state == TrafficLightState.GREEN:
+                        can_turn_green_dict[id1] = False
+
+        # Para evitar que ambos pares cambien a verde en el mismo paso, primero procesa los pares, luego los demás
+        processed_ids = set()
+        # Lógica heurística simple para todos los semáforos (sin pares)
         for tl in (globals().get("traffic_lights") or []):
+            tl_id = getattr(tl, "id", None)
+            queue = queues.get(tl_id, 0)
+            if hasattr(tl, "heuristic_control"):
+                tl.heuristic_control(queue, autos_en_rotonda, [], tl_by_id, params, self.cars, tlconnections, can_turn_green=True)
             if hasattr(tl, "step"):
                 tl.step()
-        # 2.5) Imprime el diccionario de colas por semáforo para depuración
-        queues = self.get_queues_by_traffic_light(self.cars, tlconnections)
-        #print("Colas por semáforo:", queues)
         # 3) (Opcional) plot si quieres conservarlo
         if hasattr(self, "plot"):
             self.plot()
@@ -375,23 +431,32 @@ class Renderer(ap.Model):
         Un auto se considera en cola si está en la misma ruta y cerca del semáforo (dentro de threshold).
         """
         queues_red = {}
+    # La ventana de parada será igual a la distancia desde el spawn hasta el semáforo
+        # Agrupa TLConnections por semáforo
+        from collections import defaultdict
+        tlc_by_light = defaultdict(list)
         for tlc in tlconnections:
             tl_id = getattr(tlc.traffic_light, "id", None)
-            if tl_id is None:
-                continue
-            # Filtra autos en la misma ruta y detrás del semáforo
-            cars_on_route = [car for car in cars if car.route == tlc.route and car.s < tlc.s]
-            # Ordena por posición (más cerca del semáforo primero)
-            cars_on_route.sort(key=lambda car: tlc.s - car.s)
-            count_queue = 0
-            # Solo cuenta si el semáforo está en rojo
-            if tlc.traffic_light.state == TrafficLightState.RED:
-                for car in cars_on_route:
-                    # Considera que el auto está parado si su velocidad es 0
-                    if hasattr(car, 'v') and car.v == 0:
-                        count_queue += 1
-                    else:
-                        break  # Si el auto no está parado, la fila se rompe
-            queues_red[tl_id] = queues_red.get(tl_id, 0) + count_queue
+            if tl_id is not None:
+                tlc_by_light[tl_id].append(tlc)
+
+        for tl_id, tlc_list in tlc_by_light.items():
+            traffic_light = tlc_list[0].traffic_light
+            if traffic_light.state == TrafficLightState.RED:
+                count_queue = 0
+                for tlc in tlc_list:
+                    # Autos en la misma ruta y antes del semáforo, ordenados por posición (más cerca primero)
+                    cars_on_route = [car for car in cars if car.route == tlc.route and car.s < tlc.s]
+                    cars_on_route.sort(key=lambda car: tlc.s - car.s)
+                    for car in cars_on_route:
+                        WINDOW = tlc.s  # distancia desde el spawn hasta el semáforo
+                        ahead = (tlc.s - car.s) % getattr(car.route, "length", 0.0)
+                        if hasattr(car, 'state') and car.state == "stop" and ahead <= 200:
+                            count_queue += 1
+                        else:
+                            break  # La cola se rompe en el primer auto que no está parado por este semáforo
+                queues_red[tl_id] = count_queue
+            else:
+                queues_red[tl_id] = 0
         return queues_red
     
