@@ -364,13 +364,23 @@ class Model(ap.Model):
     def push_state(self):
         state: Any = {
             "cars": [
-                {
-                    "id": id(car),
-                    "position": car.pos,
-                    "heading": np.degrees(car.heading_in_radians),
-                    "route_id": id(car.route)
-                } for car in self.active_cars
+            {
+                "id": id(car),
+                "position": car.pos,
+                "heading": np.degrees(car.heading_in_radians),
+                "route_id": id(car.route)
+            } for car in self.active_cars
             ],
+            "traffic_lights": [
+            {
+                "id": id(tl),
+                "state": tl.state.value,
+                "x": tl.x,
+                "y": tl.y
+            } for tl in set([
+                tlc.traffic_light for tlc in self.TlcConn
+            ])
+            ]
         }
 
         self.net.push_state(state)

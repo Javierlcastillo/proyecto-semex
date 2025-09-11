@@ -10,7 +10,7 @@ model = Model({
     'steps': 10000,
     'train': True, # Por alguna razón, el código funciona mejor si está entrenando. Incluso cua
 
-    'render_every': 0, # We will render only for debugging purposes, so not now.
+    'render_every': 10, # We will render only for debugging purposes, so not now.
 
     'policy_dir': 'checkpoints',
     'autosave_interval': 120,
