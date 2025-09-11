@@ -1,7 +1,7 @@
 import json
 import os
 from typing import List, Tuple, Any
-from route import Route
+from route import Route 
 
 # --- Where to look for the JSON files
 _CANDIDATES = [
@@ -136,7 +136,7 @@ for i, poly in enumerate(_polys):
     # Save the exact first coordinate from the JSON so cars can spawn there.
     # This is the raw point BEFORE any resampling that Route might do.
     x0, y0 = poly[0]          # works if each point is [x, y] or (x, y)
-    r.json_start = (float(x0), float(y0))
+    r.json_start = (float(x0), float(y0)) # type: ignore
 
     # Optional: attach a human-readable name if later useful (from meta or fallback)
     name = ""
