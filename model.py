@@ -180,9 +180,69 @@ class Renderer(ap.Model):
         if hasattr(car, "plot"):
             car.plot(self.ax)
         return car
+    
+
+    def get_queues_by_traffic_light(self, cars, tlconnections, threshold: float = 200.0):
+        """
+        Returns a dict {traffic_light_id: queue_len}.
+        A car counts toward the queue if:
+        - it is on the same route as the TLConnection,
+        - it is before the stop line (by s),
+        - it is 'stopped' because of the light (car.state == 'stop'),
+        - and its distance to the stop line is <= threshold.
+        Only queues for RED lights are counted; GREEN/YELLOW -> 0.
+        """
+        from collections import defaultdict
+        from traffic_light import TrafficLightState
+
+        # Group tlconnections by light id
+        tlc_by_light = defaultdict(list)
+        for tlc in tlconnections:
+            tl = getattr(tlc, "traffic_light", None)
+            tl_id = getattr(tl, "id", None)
+            if tl_id is not None:
+                tlc_by_light[tl_id].append(tlc)
+
+        queues = {}
+
+        for tl_id, tlc_list in tlc_by_light.items():
+            tl = tlc_list[0].traffic_light
+            # Only measure queues when the light is RED
+            if tl.state != TrafficLightState.RED:
+                queues[tl_id] = 0
+                continue
+
+            count_queue = 0
+            for tlc in tlc_list:
+                route = tlc.route
+                L = float(getattr(route, "length", 0.0) or 0.0)
+
+                # Cars on the same route, located BEFORE the stop line
+                cars_on_route = [c for c in cars
+                                if getattr(c, "route", None) is route
+                                and getattr(c, "s", 0.0) <= tlc.s]
+
+                # Sort nearest to the stop first
+                cars_on_route.sort(key=lambda c: (tlc.s - c.s))
+
+                # Count consecutive stopped cars within the threshold window
+                for c in cars_on_route:
+                    ahead = (tlc.s - c.s) if L <= 0.0 else ((tlc.s - c.s) % L)
+                    if getattr(c, "state", None) == "stop" and ahead <= threshold:
+                        count_queue += 1
+                    else:
+                        # Queue stops at the first car that is not stopped / too far
+                        break
+
+            queues[tl_id] = count_queue
+
+        return queues
+
 
     # ---------- main tick ----------
     def step(self):
+
+
         # --- stochastic arrivals (Poisson-like per route) ---
         dt = self.dt if hasattr(self, "dt") else 1.0
         if len(self.cars) < self.MAX_CARS:
@@ -230,21 +290,27 @@ class Renderer(ap.Model):
 
         # --- Apply heuristic for each TL (no pair constraints, no gating) ---
         tl_by_id = {getattr(tl, "id", f"tl_{i}"): tl for i, tl in enumerate(traffic_lights)}
+        # Compute per-light queues based on stopped cars near each stop line
+        queues_by_id = self.get_queues_by_traffic_light(self.cars, tlconnections, threshold=200.0)
+
         for tl in traffic_lights:
-            queue = q_by_tl.get(tl, 0)
+            tl_id = getattr(tl, "id", None)
+            q = queues_by_id.get(tl_id, 0)
+
             if hasattr(tl, "heuristic_control"):
                 tl.heuristic_control(
-                    queue=queue,
+                    queue=q,
                     autos_en_rotonda=0,
-                    pairs=[],  # no explicit conflict pairs here
-                    tl_by_id=tl_by_id,
-                    params={},  # use defaults inside TrafficLight
+                    pairs=[],                   # keep whatever you use here
+                    tl_by_id={},
+                    params={},                  # use defaults in TrafficLight
                     cars=self.cars,
                     tlconnections=tlconnections,
                     can_turn_green=True,
                 )
+
             if hasattr(tl, "step"):
-                tl.step(dt)
+                tl.step(self.dt if hasattr(self, "dt") else 1.0)
 
         # --- Move cars AFTER lights decided their states ---
         for car in self.cars:
