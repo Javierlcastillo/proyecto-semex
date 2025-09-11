@@ -6,7 +6,7 @@ from model import Model
 model = Model({ 
     'steps': 200,
 
-    'train':True,
+    'train': True,
     'render': False,
     'policy_dir': 'checkpoints',
     'autosave_interval': 60,

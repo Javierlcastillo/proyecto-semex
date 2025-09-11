@@ -1,6 +1,9 @@
 import agentpy as ap
 import numpy as np
 from typing import Dict, Tuple, List
+
+import matplotlib
+matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
