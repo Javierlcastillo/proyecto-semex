@@ -40,15 +40,17 @@ class Route:
     Internally we build a high-resolution polyline and compute cumulative length; all public sampling is done by arc-length.
     """
     segments: Sequence[ParamFunc]
-    _cumlen: npt.NDArray[np.float64] = field(init=False)
+    _cumulative_lengths: npt.NDArray[np.float64] = field(init=False)
     samples_per_segment: int = 600 # Controls arc-length approximation accuracy
     name: str = "Generic"
+    
+    length: np.float32 = np.float32(0.0)
 
     def __post_init__(self):
         if not self.segments:
             self._points = np.zeros((0, 2), dtype=float)
-            self._cumlen = np.array([0.0], dtype=float)
-            self.length = 0.0
+            self._cumulative_lengths = np.array([0.0], dtype=float)
+            self.length = np.float32(0.0)
             return
         
         pts_list: List[npt.NDArray[np.float64]] = []
@@ -62,14 +64,14 @@ class Route:
         diffs = np.linalg.norm(np.diff(all_pts, axis=0), axis=1)
         keep = np.concatenate(([True], diffs > 1e-9))
         self._points = all_pts[keep]
-        self._cumlen = _calculate_cumulative_lengths(self._points)
-        self.length = float(self._cumlen[-1])
+        self._cumulative_lengths = _calculate_cumulative_lengths(self._points)
+        self.length = np.float32(self._cumulative_lengths[-1])
 
     def pos_at(self, s: float) -> Point:
         """Return (x, y) at distance s along the route (clipped to [0, length])"""
         if self.length == 0.0:
             return (0.0, 0.0)
-        p = _interpolate_points(self._points, np.asarray([s], dtype=float), self._cumlen)[0]
+        p = _interpolate_points(self._points, np.asarray([s], dtype=float), self._cumulative_lengths)[0]
         return float(p[0]), float(p[1])
 
     def sample_even(self, n: int) -> npt.NDArray[np.float64]:
@@ -79,7 +81,7 @@ class Route:
         if self.length == 0.0:
             return np.tile(self._points[:1], (n, 1))
         s = np.linspace(0.0, self.length, n, dtype=np.float64)
-        return _interpolate_points(self._points, s, self._cumlen)
+        return _interpolate_points(self._points, s, self._cumulative_lengths)
     
     def plot(self, ax: Axes, color: str = 'black'):
         pts = self.sample_even(400)
