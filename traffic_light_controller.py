@@ -33,6 +33,8 @@ class TrafficLightController(agentpy.Agent):
     warmup: int = 200
     train_every: int = 10
 
+    state_duration: Dict[TLConnection, int] = {}
+
     def setup(self, tlcs: list[TLConnection], mode: TLCtrlMode = TLCtrlMode.FIXED): # type: ignore
         self.mode = mode
         self.tlcs = tlcs
@@ -65,7 +67,16 @@ class TrafficLightController(agentpy.Agent):
             self.last_states = {tlc: None for tlc in self.tlcs}
             self.last_actions = {tlc: None for tlc in self.tlcs}
 
+        self.state_duration = {tlc: 0 for tlc in tlcs}
+
     def step(self):
+        # Update duration counters
+        for tlc in self.tlcs:
+            if tlc.traffic_light.state == getattr(self, 'last_states', {}).get(tlc, None):
+                self.state_duration[tlc] += 1
+            else:
+                self.state_duration[tlc] = 1
+
         if self.mode == TLCtrlMode.FIXED:
             self._fixed_cycle()
         elif self.mode == TLCtrlMode.QLEARNING:
@@ -221,7 +232,12 @@ class TrafficLightController(agentpy.Agent):
                       if car.s > tlc.s and car.s - tlc.s < 10.0 and car.ds > 1.0]
         
         reward = 0.0
-        
+
+        # Penalize changing state too quickly
+        min_duration = 10
+        if self.state_duration[tlc] < min_duration:
+            reward -= 2.0  # Increase penalty as needed
+
         # Reward for current state
         if tlc.traffic_light.state == TrafficLightState.GREEN:
             # Reward for cars passing through green
