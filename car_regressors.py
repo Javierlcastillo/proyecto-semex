@@ -12,6 +12,8 @@ except Exception:
     ExtraTreesRegressor = None  # type: ignore
     joblib = None  # type: ignore
 
+N_ESTIMS = 32
+
 # Singleton state
 _models: Optional[Dict[int, Any]] = None
 _trained: Optional[Set[int]] = None
@@ -20,7 +22,7 @@ _lock = threading.Lock()
 
 def init(num_actions: int,
          *,
-         n_estimators: int = 64,
+         n_estimators: int = N_ESTIMS,
          min_samples_leaf: int = 2,
          random_state: int = 42,
          n_jobs: int = -1,
@@ -90,7 +92,7 @@ def save(dirpath: str) -> None:
         "replay": list(_replay),
         "replay_maxlen": _replay.maxlen or 20000,
     }
-    joblib.dump(snap, os.path.join(dirpath, "fqi.joblib"))
+    joblib.dump(snap, os.path.join(dirpath, "fqi-" + str(N_ESTIMS) + "_estimators.joblib"))
 
 def load(dirpath: str) -> None:
     """Load models, trained set, and replay buffer from a directory."""
