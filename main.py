@@ -7,7 +7,7 @@ from model import Model
 os.makedirs('./videos', exist_ok=True)
 
 model = Model({ 
-    'steps': 10000,
+    'steps': 750,
     'train': True, # Por alguna razón, el código funciona mejor si está entrenando. Incluso cua
 
     'render_every': 10, # We will render only for debugging purposes, so not now.
