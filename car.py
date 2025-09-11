@@ -136,7 +136,7 @@ class Car(ap.Agent):
             self.patch = patches.Polygon(
                 corners,
                 closed=True,
-                facecolor='red' if self.is_colliding else 'tab:blue',
+                facecolor='tab:blue',
                 alpha=0.9,
                 zorder=2
             )
