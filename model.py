@@ -65,6 +65,18 @@ class Model(ap.Model):
         self.net = NetManager()
         self.net.start()
 
+
+        # --- OFFLINE EXPORT (single JSON after run) ---
+        self.offline_export: bool = bool(getattr(self, "p", {}).get("offline_export", False))
+        export_dir = str(getattr(self, "p", {}).get("offline_export_dir", "exports"))
+        os.makedirs(export_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.offline_export_path: str = os.path.join(export_dir, f"run-{ts}.json")
+        self._recorded_frames: list[dict] = []
+
+        # make sure we always dump on shutdown
+        atexit.register(self._dump_offline_json)
+        # ------------------------------------------------
         # Mode switches (with defaults)
         p = getattr(self, "p", {})
         print("Model parameters:", p)
@@ -100,7 +112,16 @@ class Model(ap.Model):
 
         ### END RENDERING ###
 
-        self.TlcCtrl = TrafficLightController(self, self.TlcConn, TLCtrlMode.QLEARNING)
+        mode_key = str(getattr(self, "p", {}).get("tl_mode", "fixed")).strip().lower()
+        if mode_key in ("qlearning", "ql", "q"):
+            tl_mode = TLCtrlMode.QLEARNING
+        elif mode_key in ("fixed", "f", "static"):
+            tl_mode = TLCtrlMode.FIXED
+        else:
+            print(f"[TL] Unknown tl_mode='{mode_key}', falling back to FIXED")
+            tl_mode = TLCtrlMode.FIXED
+
+        self.TlcCtrl = TrafficLightController(self, self.TlcConn, tl_mode)
 
         self.policy_dir: str = str(p.get('policy_dir', 'checkpoints'))
 
@@ -169,6 +190,9 @@ class Model(ap.Model):
 
         # 5) Shared caches (collisions, TTC) 
         self._compute_collision_flags()
+
+        if self.offline_export:
+            self._record_frame()
 
         # 6) Capture every frame to GIF (offscreen)
         if self.record_gif:
@@ -361,6 +385,81 @@ class Model(ap.Model):
         if interval_idx > self.current_interval:
             self.schedule_spawns_for_interval(interval_idx)
 
+
+    def _record_frame(self) -> None:
+        """Capture one frame in a Unity-friendly schema."""
+        # cars
+        cars_payload = []
+        for car in self.active_cars:
+            x, y = float(car.pos[0]), float(car.pos[1])
+            yaw_deg = float(np.degrees(car.heading_in_radians))
+            # best-effort extras (fallbacks if attributes don’t exist)
+            speed = float(getattr(car, "v", getattr(car, "speed", 0.0)))
+            s_param = float(getattr(car, "s", 0.0))
+            length = float(getattr(car, "length", 4.0))
+            width  = float(getattr(car, "width", 1.8))
+            route_name = getattr(getattr(car, "route", None), "name", "")
+            cars_payload.append({
+                "id": int(id(car)),
+                "position": [x, y],
+                "heading": yaw_deg,      # degrees; the Unity player maps this for you
+                "route_id": int(id(car.route)) if getattr(car, "route", None) else 0,
+                "speed": speed,
+                "s": s_param,
+                "route_name": route_name,
+                "length": length,
+                "width": width
+            })
+        
+
+        # traffic lights (unique set)
+        seen = set()
+        lights_payload = []
+        for tlc in self.TlcConn:
+            tl = tlc.traffic_light
+            if tl in seen:
+                continue
+            seen.add(tl)
+            # best-effort rotation; 0 if not present
+            rot_deg = float(getattr(tl, "rotation_deg", 0.0))
+            lights_payload.append({
+                "light_id": str(getattr(tl, "name", id(tl))),
+                "state": str(tl.state.value),
+                "x": float(getattr(tl, "x", 0.0)),
+                "y": float(getattr(tl, "y", 0.0)),
+                "rotation_deg": rot_deg
+            })
+
+        self._recorded_frames.append({
+            "t": float(self.t),
+            "cars": cars_payload,
+            "lights": lights_payload
+        })
+
+    def _dump_offline_json(self) -> None:
+            """Write the recorded frames to a single JSON file (once)."""
+            if not getattr(self, "offline_export", False):
+                return
+            if not getattr(self, "_recorded_frames", None):
+                return
+            try:
+                payload = {
+                    "meta": {
+                        "created_at": datetime.now().isoformat(),
+                        "total_frames": len(self._recorded_frames),
+                        "dt_hint_seconds": 1.0,  # tweak if your step isn’t 1s
+                    },
+                    "frames": self._recorded_frames
+                }
+                with open(self.offline_export_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+                print(f"[EXPORT] Offline run saved to: {self.offline_export_path}")
+            except Exception as e:
+                print(f"[EXPORT] Failed to write offline JSON: {e}")
+            finally:
+                # avoid double-writing if atexit fires twice
+                self._recorded_frames = []
+                
     def push_state(self):
         state: Any = {
             "cars": [
