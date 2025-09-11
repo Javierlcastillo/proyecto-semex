@@ -7,13 +7,15 @@ from model import Model
 os.makedirs('./videos', exist_ok=True)
 
 model = Model({ 
-    'steps': 10000,
+    'steps': 500,
     'train': True, # Por alguna razón, el código funciona mejor si está entrenando. Incluso cua
 
     'render_every': 10, # We will render only for debugging purposes, so not now.
 
     'policy_dir': 'checkpoints',
     'autosave_interval': 120,
+
+    "offline_export": True,
 
     'record_gif': True,
     'gif_path': f'./videos/simulation_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}.gif',
