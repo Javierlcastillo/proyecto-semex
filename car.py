@@ -141,7 +141,7 @@ class Car(ap.Agent):
             self.patch = patches.Rectangle(
                 (x - self.width/2, y - self.height/2),
                 self.width, self.height,
-                facecolor='tab:blue', alpha=0.9, zorder=2
+                facecolor = 'red' if self.is_colliding else 'tab:blue', alpha=0.9, zorder=2
             )
             ax.add_patch(self.patch)
         # Update position and rotation only (reuse artist)
