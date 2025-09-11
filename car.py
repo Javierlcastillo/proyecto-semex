@@ -159,7 +159,7 @@ class Car(ap.Agent):
         return float(np.arctan2(p1[1] - p0[1], p1[0] - p0[0]))
 
     @property
-    def _corners(self) -> np.ndarray[Any, Any]:
+    def corners(self) -> np.ndarray[Any, Any]:
         """
         Returns the corner points of the car's rectangle in world coordinates.
         """
@@ -209,10 +209,11 @@ class Car(ap.Agent):
             if hit is not None:
                 return bool(hit)
         # Fallback (only if cache not ready)
-        for other in self.model.cars:
+        # Use active_cars instead of cars
+        for other in self.model.active_cars:
             if other is self:
                 continue
-            if self._sat_overlap(self._corners, other._corners):
+            if self._sat_overlap(self.corners, other.corners):
                 return True
         return False
     
@@ -227,7 +228,8 @@ class Car(ap.Agent):
         v_ego = np.array([self.ds * c, self.ds * s], dtype=np.float32)
 
         min_ttc = np.float32(100.0)
-        for other in self.model.cars:
+        # Use active_cars instead of cars
+        for other in self.model.active_cars:
             if other is self:
                 continue
             ox, oy = other.pos

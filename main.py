@@ -1,10 +1,14 @@
 import datetime
 import matplotlib
-matplotlib.use('TkAgg')  # or 'QtAgg' if you have PyQt/PySide installed
+import os
+matplotlib.use('Agg')  # or 'QtAgg' if you have PyQt/PySide installed
 from model import Model
 
+# Create videos directory if it doesn't exist
+os.makedirs('./videos', exist_ok=True)
+
 model = Model({ 
-    'steps': 200,
+    'steps': 400,
 
     'train': True,
     'render': False,
@@ -12,7 +16,9 @@ model = Model({
     'autosave_interval': 60,
 
     'record_gif': True,
-    'gif_path': f'./simulation_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}.gif',
+    'gif_path': f'./videos/simulation_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}.gif',
     'gif_fps': 20,
+
+    'flow_path': 'traffic_flow.json',
 })
 model.run()
