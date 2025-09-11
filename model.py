@@ -102,7 +102,9 @@ class Renderer(ap.Model):
         self.cars = []
         for r in self.routes:
             conns = [tlc for tlc in tlconnections if tlc.route is r]
-            self.cars.append(Car(self, r, conns))
+            cid = len(self.cars)  # simple unique id
+            q = getattr(self, "q_learner", None)
+            self.cars.append(Car(self, r, conns, cid, q))
 
         # Figure / Axes
         self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
