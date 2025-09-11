@@ -7,17 +7,17 @@ from model import Model
 os.makedirs('./videos', exist_ok=True)
 
 model = Model({ 
-    'steps': 40,
+    'steps': 3000,
     'train': True,
 
-    'render_every': 10,
+    'render_every': 0,
 
     'policy_dir': 'checkpoints',
-    'autosave_interval': 60,
+    'autosave_interval': 120,
 
     'record_gif': True,
     'gif_path': f'./videos/simulation_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}.gif',
-    'gif_fps': 20,
+    'gif_fps': 27,
 })
 
 model.run() # type: ignore
