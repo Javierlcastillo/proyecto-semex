@@ -71,11 +71,14 @@ class TrafficLightController(agentpy.Agent):
 
     def step(self):
         # Update duration counters
+        if not hasattr(self, 'last_tl_states'):
+            self.last_tl_states = {tlc: tlc.traffic_light.state for tlc in self.tlcs}
         for tlc in self.tlcs:
-            if tlc.traffic_light.state == getattr(self, 'last_states', {}).get(tlc, None):
+            if tlc.traffic_light.state == self.last_tl_states[tlc]:
                 self.state_duration[tlc] += 1
             else:
                 self.state_duration[tlc] = 1
+            self.last_tl_states[tlc] = tlc.traffic_light.state
 
         if self.mode == TLCtrlMode.FIXED:
             self._fixed_cycle()
