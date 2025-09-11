@@ -98,7 +98,7 @@ class Model(ap.Model):
         self.gif_dpi = int(p.get('gif_dpi', 100))
         default_video_dir = os.path.join(os.getcwd(), "videos")
         os.makedirs(default_video_dir, exist_ok=True)
-        default_gif_name = f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}.gif"
+        default_gif_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{self._step_idx}steps.gif"
         self.gif_path = str(p.get('gif_path', os.path.join(default_video_dir, default_gif_name)))
 
         # Set up plotting if rendering OR recording GIF

@@ -8,9 +8,8 @@ from model import Model
 os.makedirs('./videos', exist_ok=True)
 
 model = Model({ 
-    'steps': 400,
-
-    'train': True,
+    'steps': 2000,
+    'train': False,
     'render': False,
     'policy_dir': 'checkpoints',
     'autosave_interval': 60,
