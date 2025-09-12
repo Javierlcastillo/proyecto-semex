@@ -3,6 +3,7 @@ import numpy as np
 from typing import Dict, Tuple, List, Optional, Any
 import json
 import random
+import pandas as pd
 
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
@@ -65,6 +66,7 @@ class Model(ap.Model):
         self.net = NetManager()
         self.net.start()
 
+        self.finished_cars = 0
 
         # --- OFFLINE EXPORT (single JSON after run) ---
         self.offline_export: bool = bool(getattr(self, "p", {}).get("offline_export", False))
@@ -167,7 +169,6 @@ class Model(ap.Model):
 
     def step(self):
         # 0) initialize cars_finished counter per step to 0
-        self.finished_cars = 0
         # 0) Check for new cars to spawn
         for route_idx, spawn_times in self.car_spawn_queues.items():
             while spawn_times and spawn_times[0] <= self.t:
@@ -182,7 +183,7 @@ class Model(ap.Model):
         self.TlcCtrl.step()
 
         # 2) Decision + movement for all active cars
-        for car in self.active_cars:
+        for car in list(self.active_cars):
             car.step()
 
         # 3) Remove cars that have completed their routes
@@ -292,18 +293,34 @@ class Model(ap.Model):
                         self.car_spawn_queues[route_idx].append(spawn_step)
     
     def can_spawn_safely(self, route_idx: int) -> bool:
-        """Check if it's safe to spawn a car on the given route without overlapping others."""
+        """
+        Check if it's safe to spawn a car by creating a "ghost" car and checking for overlaps.
+        """
         target_route = self.routes[route_idx]
-        spawn_pos = target_route.pos_at(0)  # Start position
         
-        # Check distance to all active cars on the same route
+        # --- Create a "ghost" car's geometry ---
+        x, y = target_route.pos_at(0)
+        p1 = target_route.pos_at(1.0) # A point slightly ahead to get heading
+        heading_rad = np.arctan2(p1[1] - y, p1[0] - x)
+        
+        w, h = 20.0, 10.0 # Standard car dimensions from car.py
+        c, s = np.cos(heading_rad), np.sin(heading_rad)
+        hw, hh = w/2.0, h/2.0
+        
+        local_corners = np.array([
+            [-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]
+        ])
+        R = np.array([[c, -s], [s, c]])
+        ghost_corners = local_corners @ R.T + np.array([x, y])
+        # --- End of ghost geometry ---
+
+        # Check for overlap with all active cars
         for car in self.active_cars:
-            if car.route == target_route:
-                car_pos = car.route.pos_at(car.s)
-                distance = np.sqrt((spawn_pos[0] - car_pos[0])**2 + (spawn_pos[1] - car_pos[1])**2)
-                if distance < self.minimum_spawn_distance:
-                    return False
+            if car._sat_overlap(ghost_corners, car.corners):
+                # Overlap detected, not safe to spawn
+                return False
                     
+        # No overlaps found
         return True
     
     def spawn_car(self, route_idx: int) -> None:
@@ -498,3 +515,13 @@ class Model(ap.Model):
                 print(f"Error finalizing GIF: {e}")
             finally:
                 self._gif_writer = None
+
+    def end(self):
+        """
+        Called at the end of the simulation run.
+        Calculates and prints the total number of finished cars.
+        """
+        print(f"Total cars finished: {self.finished_cars}")
+        df = pd.DataFrame(self.list_finished_cars, columns=["finished_per_stp"])
+        valor_tl = "h"
+        df.to_csv(f"cars_per_step{valor_tl}.csv", index=False)

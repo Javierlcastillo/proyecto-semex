@@ -122,8 +122,10 @@ class Car(ap.Agent):
         if done:
             self.reset_episode()
             self.model.finished_cars += 1
-        elif killed:
+            print(f"Car finished route at step {self.model.t}. Total finished this step: {self.model.finished_cars}")
+        if killed:
             self.reset_episode()
+            print(f"Car collided at step {self.model.t}")
 
         # Epsilon decay
         self.exploration_rate = max(self.min_exploration_rate, self.exploration_rate * self.exploration_decay)

@@ -6,10 +6,11 @@ from model import Model
 # Create videos directory if it doesn't exist
 os.makedirs('./videos', exist_ok=True)
 
+
 model = Model({ 
-    'steps': 350,
+    'steps': 300,
     'train': True, # Por alguna razón, el código funciona mejor si está entrenando. Incluso cua
-    'tl_mode': 'fixed',      # << choose fixed/qlearning
+    'tl_mode': "qlearning",      # << choose fixed/qlearning
 
     'render_every': 10, # We will render only for debugging purposes, so not now.
 
