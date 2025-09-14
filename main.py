@@ -8,7 +8,7 @@ os.makedirs('./videos', exist_ok=True)
 
 
 model = Model({ 
-    'steps': 500,
+    'steps': 300,
     'train': True, # Por alguna razón, el código funciona mejor si está entrenando. Incluso cua
     'tl_mode': "fixed",      # << choose fixed/qlearning
 
@@ -20,7 +20,7 @@ model = Model({
 
 
     'policy_dir': 'checkpoints',
-    'autosave_interval': 120,
+    'autosave_interval': 60,
 
     "offline_export": True,
 
