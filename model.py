@@ -170,37 +170,43 @@ class Model(ap.Model):
         atexit.register(self._finalize_gif)
 
     def step(self):
-        # 0) initialize cars_finished counter per step to 0
-        # 0) Check for new cars to spawn
+        # 0) Try to spawn any cars scheduled for this tick
         for route_idx, spawn_times in self.car_spawn_queues.items():
             while spawn_times and spawn_times[0] <= self.t:
                 if self.can_spawn_safely(route_idx):
-                    self.spawn_car(route_idx)
+                    self.spawn_car(route_idx)         # must set new_car.spawn_step = self.t inside
                     spawn_times.pop(0)
                 else:
-                    # Can't spawn yet, try again next step
+                    # Not safe yet; try again next step
                     break
 
-        # 1) Update traffic light states
-        self.TlcCtrl.step()
+        # --- PRE-MOVE collision pass: catch overlaps right at spawn ---
+        self._compute_collision_flags()
+        self._despawn_spawn_collisions()
+
+        # 1) Update traffic lights
+        if self.TlcCtrl is not None:
+            self.TlcCtrl.step()
 
         # 2) Decision + movement for all active cars
-        for car in list(self.active_cars):
+        for car in list(self.active_cars):            # list() so we can remove during iteration safely
             car.step()
+
+        # --- POST-MOVE collision pass: remove cars that are collided & stuck ---
+        self._compute_collision_flags()
+        self._despawn_spawn_collisions()
 
         # 3) Remove cars that have completed their routes
         self.remove_completed_cars()
 
-        # 4) Check if we need to move to next interval
+        # 4) Move to next demand interval if needed (may reschedule spawns)
         self.check_new_interval()
 
-        # 5) Shared caches (collisions, TTC) 
-        self._compute_collision_flags()
-
+        # 5) Optional: offline JSON export frame
         if self.offline_export:
             self._record_frame()
 
-        # 6) Capture every frame to GIF (offscreen)
+        # 6) Capture frame for GIF
         if self.record_gif:
             self._capture_gif_frame()
 
@@ -208,10 +214,10 @@ class Model(ap.Model):
         if self.render_every > 0 and (self.t % self.render_every == 0):
             self.plot()
 
-        # 8) Push state to clients
-        # 9) append to list of finished cars
+        # 8) Push state to any clients / logs
         self.list_finished_cars.append(self.finished_cars)
         self.push_state()
+
 
     def plot(self):
         if not self.ax:
@@ -291,34 +297,36 @@ class Model(ap.Model):
     
     def can_spawn_safely(self, route_idx: int) -> bool:
         """
-        Check if it's safe to spawn a car by creating a "ghost" car and checking for overlaps.
+        Check if it's safe to spawn a car by creating a 'ghost' box at s=0 and
+        testing SAT overlap against all active cars.
         """
         target_route = self.routes[route_idx]
-        
-        # --- Create a "ghost" car's geometry ---
-        x, y = target_route.pos_at(0)
-        p1 = target_route.pos_at(1.0) # A point slightly ahead to get heading
-        heading_rad = np.arctan2(p1[1] - y, p1[0] - x)
-        
-        w, h = 20.0, 10.0 # Standard car dimensions from car.py
-        c, s = np.cos(heading_rad), np.sin(heading_rad)
-        hw, hh = w/2.0, h/2.0
-        
-        local_corners = np.array([
-            [-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]
-        ])
-        R = np.array([[c, -s], [s, c]])
-        ghost_corners = local_corners @ R.T + np.array([x, y])
-        # --- End of ghost geometry ---
 
-        # Check for overlap with all active cars
+        # Use the real car footprint if we already have one
+        if self.active_cars:
+            w = float(self.active_cars[0].width)
+            h = float(self.active_cars[0].height)
+        else:
+            w, h = 20.0, 10.0  # fallback
+
+        # Center & heading at spawn
+        x, y = target_route.pos_at(0.0)
+        p1 = target_route.pos_at(1.0)
+        heading_rad = np.arctan2(p1[1] - y, p1[0] - x)
+
+        c, s = np.cos(heading_rad), np.sin(heading_rad)
+        hw, hh = w * 0.5, h * 0.5
+        local_corners = np.array([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]], dtype=np.float32)
+        R = np.array([[c, -s], [s,  c]], dtype=np.float32)
+        ghost_corners = local_corners @ R.T + np.array([x, y], dtype=np.float32)
+
+        # Reject if it overlaps any current car
         for car in self.active_cars:
             if car._sat_overlap(ghost_corners, car.corners):
-                # Overlap detected, not safe to spawn
                 return False
-                    
-        # No overlaps found
+
         return True
+
     
     def spawn_car(self, route_idx: int) -> None:
         """Create a new car on the specified route."""
@@ -330,7 +338,7 @@ class Model(ap.Model):
             route=route,
             tlconnections=relevant_tlconnections
         )
-        
+        new_car.spawn_step = self.t 
         self.active_cars.append(new_car)
         print(f"Spawned car on route {route_idx}, total active cars: {len(self.active_cars)}")
 
@@ -388,15 +396,70 @@ class Model(ap.Model):
         # Publish per-car flags
         self.collision_flags = {cars[i]: collided[i] for i in range(n)}
 
-    def remove_completed_cars(self):
-        """Remove cars that have completed their routes."""
-        completed_cars = [car for car in self.active_cars if car.s >= car.route.length]
-        for car in completed_cars:
+    def _despawn_spawn_collisions(self) -> None:
+        # Remove cars that collide right after spawn, or that remain collided & stuck.
+        if not hasattr(self, "_stuck_counter"):
+            self._stuck_counter = {}
+
+        near_s_threshold = 8.0       # distance from spawn (in route s-units) to consider "at spawn"
+        spawn_grace_steps = 10       # age window (in steps) to treat as spawn collisions
+        stuck_speed_eps   = 0.05     # below this → considered not moving
+        stuck_max_steps   = 30       # consecutive steps while collided+stuck before removal
+
+        to_remove = []
+
+        for car, collided in self.collision_flags.items():
+            if not collided:
+                self._stuck_counter.pop(car, None)
+                continue
+
+            age = self.t - int(getattr(car, "spawn_step", self.t))
+            s   = float(getattr(car, "s", 0.0))
+            v = float(getattr(car, "ds", 0.0))
+
+            # 1) Collision basically at spawn → remove immediately during grace window
+            if age <= spawn_grace_steps and s <= near_s_threshold:
+                to_remove.append(car)
+                continue
+
+            # 2) General "collided & not moving" → count consecutive steps, then remove
+            if v <= stuck_speed_eps:
+                self._stuck_counter[car] = self._stuck_counter.get(car, 0) + 1
+                if self._stuck_counter[car] >= stuck_max_steps:
+                    to_remove.append(car)
+            else:
+                self._stuck_counter.pop(car, None)
+
+        for car in to_remove:
             if car in self.active_cars:
                 self.active_cars.remove(car)
-        
+
+    def remove_completed_cars(self) -> None:
+        """Remove cars that have completed their routes (and clear their visuals/state)."""
+        completed_cars = [car for car in list(self.active_cars) if car.s >= car.route.length]
+        for car in completed_cars:
+            # 1) remove the drawn patch (so it disappears from plot/GIF)
+            if getattr(car, "destroy", None):
+                car.destroy()
+            else:
+                # fallback if you didn't add Car.destroy()
+                p = getattr(car, "patch", None)
+                if p is not None:
+                    try: p.remove()
+                    except Exception: pass
+                car.patch = None
+
+            # 2) remove from sim state
+            if car in self.active_cars:
+                self.active_cars.remove(car)
+            if hasattr(self, "collision_flags"):
+                self.collision_flags.pop(car, None)
+            if hasattr(self, "_stuck_counter"):
+                self._stuck_counter.pop(car, None)
+
         if completed_cars:
             print(f"Removed {len(completed_cars)} completed cars. Active cars: {len(self.active_cars)}")
+
 
     def check_new_interval(self):
         """Check if we need to move to the next time interval."""

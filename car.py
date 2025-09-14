@@ -28,6 +28,8 @@ class Car(ap.Agent):
     width: float
     height: float
 
+    spawn_step: int
+
     patch: Optional[patches.Polygon] = None
 
     # Q-Learning attributes
@@ -57,6 +59,8 @@ class Car(ap.Agent):
         self.width, self.height = 20.0, 10.0
         self.patch = None
 
+        self.spawn_step = -1
+
         # Q-learning params
         self.learning_rate = 0.1
         self.discount_factor = 0.95
@@ -84,6 +88,10 @@ class Car(ap.Agent):
 
         self.warmup = 200 if training else 0
         self.train_every = 10 if training else 0
+
+
+
+
 
     @property
     def pos(self) -> Point:
@@ -321,20 +329,20 @@ class Car(ap.Agent):
         reward = 0.0
 
         # Progress along route
-        reward += 0.5 * np.float32(self.ds)
+        reward += 0.1 * np.float32(self.ds)
 
         # Collision penalty
         if self.is_colliding:
-            reward -= np.float32(self.ds)
+            reward -= 5.0
 
         # Traffic light compliance
         tlc = self.nextTlc
         if tlc is not None and tlc.s >= self.s and tlc.traffic_light.state == TrafficLightState.RED:
             dist = tlc.s - self.s
             if dist < 10.0 and self.ds > 0.5:
-                reward -= 0.5 * np.float32(self.ds)  # Approaching red too fast
+                reward -= 1.0 # Approaching red too fast
             if dist < 1.0 and self.ds > 0.0:
-                reward -= 2.0 * np.float32(self.ds)  # Running red light
+                reward -= 2.0 # Running red light
 
         return np.float32(reward)
     
@@ -412,14 +420,6 @@ class Car(ap.Agent):
 
 
     def choose_action(self, state: np.ndarray) -> CarAction:
-        ntl = self.nextTlc
-        if ntl is not None and ntl.s >= self.s and ntl.traffic_light.state == TrafficLightState.RED:
-            dist = ntl.s - self.s
-            if dist < 25.0 and self.ds > 0.5:
-                return CarAction.Decelerate
-            if dist < 10.0 and self.ds > 0.0:
-                return CarAction.Decelerate
-
         if np.random.random() < self.exploration_rate:
             return random.choice(list(CarAction))
 
