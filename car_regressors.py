@@ -14,7 +14,7 @@ except Exception:
     joblib = None  # type: ignore
 
 ### Constants
-N_ESTIMS = 16
+N_ESTIMS = 32
 FILENAME = f"car-fqi-{N_ESTIMS}_estimators-{platform.system()}.joblib"
 
 # Singleton state
