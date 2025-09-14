@@ -342,40 +342,74 @@ class Car(ap.Agent):
         """Push transition into the shared replay buffer."""
         self.replay.append((s.astype(np.float32), int(a.value), float(r), s_next.astype(np.float32), bool(done)))
 
+    def _model_is_ready(self, m):
+        # Consider the model fitted if sklearn marked input shape or it has trees
+        if hasattr(m, "n_features_in_"):
+            return True
+        est = getattr(m, "estimators_", None)
+        return isinstance(est, (list, tuple)) and len(est) > 0
+
+
     def train_from_replay(self, sample_size: int | None = 512) -> None:
+        # Uses replay buffer to fit per-action regressors; safe when models aren't fitted yet.
         data = list(self.replay)
         if not data:
             return
-        if sample_size and len(data) > sample_size:
+
+        if sample_size is not None and len(data) > sample_size:
             data = random.sample(data, sample_size)
 
+        # transitions are (s, a_idx, r, s2, done)
         S2 = np.vstack([t[3] for t in data]).astype(np.float32)
-        # Batch predict Q_next for each action
-        q_next_mat = []
-        for a in CarAction:
-            if a.value in self._trained_actions_idx:
-                q_next_mat.append(self.q_models[a].predict(S2))
-            else:
-                q_next_mat.append(np.zeros((S2.shape[0],), dtype=np.float32))
-        q_next_max = np.max(np.vstack(q_next_mat), axis=0)
 
-        gamma = self.discount_factor
+        # ----- predict Q_next for each action (guard for unfitted models) -----
+        q_next_rows = []
+        for a in CarAction:
+            m = self.q_models[a]
+            ready = (
+                hasattr(m, "n_features_in_")
+                or (hasattr(m, "estimators_") and isinstance(m.estimators_, (list, tuple)) and len(m.estimators_) > 0)
+            )
+            if ready:
+                try:
+                    preds = m.predict(S2)
+                except Exception as e:
+                    print(f"[WARN] predict failed for {a}: {e}")
+                    preds = np.zeros((S2.shape[0],), dtype=np.float32)
+            else:
+                preds = np.zeros((S2.shape[0],), dtype=np.float32)
+            q_next_rows.append(preds.astype(np.float32))
+
+        q_next_max = np.max(np.vstack(q_next_rows), axis=0)
+
+        # ----- build targets per action -----
+        gamma = getattr(self, "discount_factor", 0.99)
         by_X = {a.value: [] for a in CarAction}
         by_y = {a.value: [] for a in CarAction}
+
         for i, (s, a_idx, r, s2, done) in enumerate(data):
             target = r if done else r + gamma * float(q_next_max[i])
             by_X[a_idx].append(s)
             by_y[a_idx].append(target)
 
+        # ----- fit each action model on its own minibatch -----
         for a in CarAction:
             X_list = by_X[a.value]
             if not X_list:
                 continue
+
             X = np.vstack(X_list).astype(np.float32)
             y = np.asarray(by_y[a.value], dtype=np.float32)
-            model = self.q_models[a]
-            model.fit(X, y)
-            self._trained_actions_idx.add(a.value)
+
+            m = self.q_models[a]
+            try:
+                m.fit(X, y)
+                # Mark as trained only if sklearn actually fitted it
+                if hasattr(m, "n_features_in_") or (hasattr(m, "estimators_") and len(getattr(m, "estimators_", [])) > 0):
+                    self._trained_actions_idx.add(a.value)
+            except Exception as e:
+                print(f"[WARN] fit failed for {a}: {e}")
+
 
     def choose_action(self, state: np.ndarray) -> CarAction:
         if np.random.random() < self.exploration_rate:

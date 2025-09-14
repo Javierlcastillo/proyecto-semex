@@ -96,9 +96,12 @@ class Model(ap.Model):
         if rendering or self.record_gif:
             self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
             self.ax.set_aspect('equal')  # type: ignore
-            self.ax.set_xlim(100, 700)   # type: ignore
-            self.ax.set_ylim(0, 600)     # type: ignore
-            self.step_text = self.ax.text(105, 595, f"Step: {self.t}", fontsize=12, bbox=dict(facecolor='white', alpha=0.7))  # type: ignore
+            # label in axes coords so it stays in the corner regardless of limits
+            self.step_text = self.ax.text(
+                0.02, 0.98, f"Step: {self.t}",
+                transform=self.ax.transAxes, va="top", ha="left",
+                fontsize=12, bbox=dict(facecolor='white', alpha=0.7)
+            )  # type: ignore
 
             plt.ion() # type: ignore
             plt.show(block=False) # type: ignore
@@ -111,6 +114,7 @@ class Model(ap.Model):
 
         for i, route in enumerate(self.routes):
             route.plot(self.ax, color=route_colors[i] if i < len(route_colors) else "black")
+        self._apply_plot_bounds(self.p if hasattr(self, "p") else {})
 
         ### END RENDERING ###
 
@@ -157,15 +161,13 @@ class Model(ap.Model):
         self.gif_path = str(p.get('gif_path', os.path.join(default_video_dir, default_gif_name)))
 
         # Initialize Pillow GIF writer
-        if self.record_gif:
-            if self.fig is None:
-                self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
-                self.ax.set_aspect('equal')  # type: ignore
-                self.ax.set_xlim(100, 700)   # type: ignore
-                self.ax.set_ylim(0, 600)     # type: ignore
-            self._gif_writer = PillowWriter(fps=self.gif_fps)
-            self._gif_writer.setup(self.fig, self.gif_path, dpi=self.gif_dpi)
-            atexit.register(self._finalize_gif)
+        if self.fig is None:
+            self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
+            self.ax.set_aspect('equal')  # type: ignore
+            # no set_xlim / set_ylim and no step_text here
+        self._gif_writer = PillowWriter(fps=self.gif_fps)
+        self._gif_writer.setup(self.fig, self.gif_path, dpi=self.gif_dpi)
+        atexit.register(self._finalize_gif)
 
     def step(self):
         # 0) initialize cars_finished counter per step to 0
@@ -262,35 +264,30 @@ class Model(ap.Model):
             print("Using default flow data")
     
     def schedule_spawns_for_interval(self, interval_idx: int):
-        """Schedule car spawns for the given time interval."""
-        if interval_idx >= len(next(iter(self.flow_data["routes"].values()))):
-            print(f"No more flow data available after interval {interval_idx}")
-            return
-            
+        # Wrap around if we ran out of flow columns
+        periods = len(next(iter(self.flow_data["routes"].values())))
+        if periods == 0:
+            print("No flow data in routes"); return
+        idx = interval_idx % periods  # <-- wrap instead of returning
         self.current_interval = interval_idx
-        
-        # Clear existing spawn queues
-        for queue in self.car_spawn_queues.values():
-            queue.clear()
-            
-        # Schedule spawns for each route
+
+        # Clear and (re)schedule
+        for q in self.car_spawn_queues.values():
+            q.clear()
+
         for route_idx, _route in enumerate(self.routes):
-            route_key = f"route{route_idx}"
-            if route_key in self.flow_data["routes"]:
-                cars_to_spawn = self.flow_data["routes"][route_key][interval_idx]
-                
-                # Distribute cars evenly within the interval
-                if cars_to_spawn > 0:
+            key = f"route{route_idx}"
+            if key in self.flow_data["routes"]:
+                cars = self.flow_data["routes"][key][idx]
+                if cars > 0:
                     spawn_delay = self.flow_data.get("spawn_delay_seconds", 5)
-                    steps_between_spawns = min(
-                        self.steps_per_interval // cars_to_spawn,
-                        spawn_delay  # minimum delay between spawns
-                    )
-                    
-                    for i in range(cars_to_spawn):
-                        # Add some randomness to avoid synchronized spawns across routes
-                        spawn_step = self.t + i * steps_between_spawns + random.randint(0, min(5, steps_between_spawns//2))
+                    # Use max so spawn_delay is a MINIMUM gap
+                    steps_between_spawns = max(self.steps_per_interval // max(cars, 1), spawn_delay)
+                    for i in range(cars):
+                        jitter = random.randint(0, max(1, steps_between_spawns // 2))
+                        spawn_step = self.t + i * steps_between_spawns + jitter
                         self.car_spawn_queues[route_idx].append(spawn_step)
+
     
     def can_spawn_safely(self, route_idx: int) -> bool:
         """
@@ -505,6 +502,45 @@ class Model(ap.Model):
         }
 
         self.net.push_state(state)
+
+    def _compute_route_bounds(self, samples_per_route: int = 200):
+        """Return (xmin, xmax, ymin, ymax) covering all routes."""
+        xs, ys = [], []
+        for r in self.routes:
+            # sample along each route
+            ss = np.linspace(0.0, r.length, num=samples_per_route, dtype=np.float32)
+            for s in ss:
+                x, y = r.pos_at(float(s))
+                xs.append(x); ys.append(y)
+        if not xs:
+            return 0.0, 1.0, 0.0, 1.0
+        return float(min(xs)), float(max(xs)), float(min(ys)), float(max(ys))
+
+    def _apply_plot_bounds(self, p: dict):
+        """Apply computed/parametrized bounds + optional zoom factor."""
+        # 1) explicit bounds via params (xmin, xmax, ymin, ymax)
+        explicit = p.get("plot_bounds", None)
+        if explicit and len(explicit) == 4:
+            xmin, xmax, ymin, ymax = map(float, explicit)
+        else:
+            xmin, xmax, ymin, ymax = self._compute_route_bounds()
+            pad = float(p.get("plot_pad", 60.0))
+            xmin -= pad; xmax += pad; ymin -= pad; ymax += pad
+
+        # Optional overall zoom-out (>1.0 zooms out, <1.0 zooms in)
+        zoom = float(p.get("zoom_out", 1.0))
+        if zoom != 1.0:
+            cx = 0.5 * (xmin + xmax)
+            cy = 0.5 * (ymin + ymax)
+            rx = 0.5 * (xmax - xmin) * zoom
+            ry = 0.5 * (ymax - ymin) * zoom
+            xmin, xmax = cx - rx, cx + rx
+            ymin, ymax = cy - ry, cy + ry
+
+        self.ax.set_xlim(xmin, xmax)  # type: ignore
+        self.ax.set_ylim(ymin, ymax)  # type: ignore
+
+
 
     def _finalize_gif(self) -> None:
         if self._gif_writer is not None:
