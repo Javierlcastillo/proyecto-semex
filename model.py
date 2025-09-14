@@ -432,6 +432,7 @@ class Model(ap.Model):
 
         for car in to_remove:
             if car in self.active_cars:
+                car.remove()
                 self.active_cars.remove(car)
 
     def remove_completed_cars(self) -> None:
@@ -439,15 +440,7 @@ class Model(ap.Model):
         completed_cars = [car for car in list(self.active_cars) if car.s >= car.route.length]
         for car in completed_cars:
             # 1) remove the drawn patch (so it disappears from plot/GIF)
-            if getattr(car, "destroy", None):
-                car.destroy()
-            else:
-                # fallback if you didn't add Car.destroy()
-                p = getattr(car, "patch", None)
-                if p is not None:
-                    try: p.remove()
-                    except Exception: pass
-                car.patch = None
+            car.remove()
 
             # 2) remove from sim state
             if car in self.active_cars:

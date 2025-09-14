@@ -20,7 +20,7 @@ model = Model({
 
 
     'policy_dir': 'checkpoints',
-    'autosave_interval': 120,
+    'autosave_interval': 30,
 
     "offline_export": True,
 
