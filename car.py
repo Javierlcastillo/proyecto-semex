@@ -449,3 +449,9 @@ class Car(ap.Agent):
             # Be tolerant during early training
             print(f"Prediction error for action {action}: {e}")
             return np.float32(0.0)
+        
+    def remove(self):
+        if self.patch is not None:
+            self.patch.remove()
+            self.patch = None
+            

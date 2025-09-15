@@ -8,9 +8,9 @@ os.makedirs('./videos', exist_ok=True)
 
 
 model = Model({ 
-    'steps': 100,
+    'steps': 500,
     'train': True, # Por alguna razón, el código funciona mejor si está entrenando. Incluso cua
-    'tl_mode': "qlearning",      # << choose fixed/qlearning
+    'tl_mode': "fixed",      # << choose fixed/qlearning
 
     'render_every': 10, # We will render only for debugging purposes, so not now.
     'plot_pad': 120,    # more/less margin
