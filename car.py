@@ -89,6 +89,10 @@ class Car(ap.Agent):
         self.warmup = 200 if training else 0
         self.train_every = 10 if training else 0
 
+
+
+
+
     @property
     def pos(self) -> Point:
         return self.route.pos_at(self.s)
@@ -146,18 +150,14 @@ class Car(ap.Agent):
             self.patch = patches.Polygon(
                 corners,
                 closed=True,
-                facecolor= 'tab:red' if self.is_colliding else 'tab:blue',
+                facecolor='tab:blue',
                 alpha=0.9,
                 zorder=2
             )
             ax.add_patch(self.patch)
         else:
             self.patch.set_xy(corners)
-
-    def remove(self):
-        if self.patch is not None:
-            self.patch.remove()
-            self.patch = None
+        # No need for rotation transform; corners are already rotated
 
     @property
     def heading_in_radians(self) -> float:
@@ -341,7 +341,7 @@ class Car(ap.Agent):
             dist = tlc.s - self.s
             if dist < 10.0 and self.ds > 0.5:
                 reward -= 1.0 # Approaching red too fast
-            if dist < 1.0 and self.ds > 0.0:
+            if dist < 5.0 and self.ds > 0.0:
                 reward -= 2.0 # Running red light
 
         return np.float32(reward)
