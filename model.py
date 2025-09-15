@@ -157,7 +157,7 @@ class Model(ap.Model):
 
     def step(self):
         # 0) Simple fixed-rate spawning (round-robin)
-        if self.t > 0 and self.t % 10 == 0:
+        if self.t > 0 and self.t % 3 == 0:
             next_route_idx = (self._last_spawn_route_idx + 1) % len(self.routes)
             if self.can_spawn_safely(next_route_idx):
                 self.spawn_car(next_route_idx)

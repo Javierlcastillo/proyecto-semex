@@ -8,7 +8,7 @@ os.makedirs('./videos', exist_ok=True)
 
 
 model = Model({ 
-    'steps': 300,
+    'steps': 1000,
     'train': True, # Por alguna razón, el código funciona mejor si está entrenando. Incluso cua
     'tl_mode': "qlearning",      # << choose fixed/qlearning
 
