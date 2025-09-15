@@ -46,13 +46,14 @@ class Model(ap.Model):
     TlcCtrl: TrafficLightController
     TlcConn: list[TLConnection]
 
-    # Flow-based spawning
-    flow_data: Dict[str, Any] = {}
-    car_spawn_queues: Dict[int, List[float]] = {}  # route_idx -> [spawn_times]
+    # Flow-based spawning is disabled for a simpler fixed-rate spawn
+    # flow_data: Dict[str, Any] = {}
+    # car_spawn_queues: Dict[int, List[float]] = {}  # route_idx -> [spawn_times]
     active_cars: List[Car] = []
-    steps_per_interval: int = 0
-    minimum_spawn_distance: float = 50.0
-    current_interval: int = 0
+    # steps_per_interval: int = 0
+    # minimum_spawn_distance: float = 50.0
+    # current_interval: int = 0
+    _last_spawn_route_idx: int = -1
 
     # --- Lightweight GIF recording (Pillow) ---
     record_gif: bool = False
@@ -134,22 +135,10 @@ class Model(ap.Model):
         # Only autosave during training
         self.autosave_interval: int = int(p.get('autosave_interval', (300 if self.training_enabled else 0)))
 
-        # Load flow data
-        flow_path = p.get('flow_path', 'data/traffic_flow.json')
-        self.load_flow_data(flow_path)
-        
         # Initialize active cars list and spawn queues as well as cars finished
         self.active_cars = []
-        self.car_spawn_queues = {i: [] for i in range(len(self.routes))}
         self.list_finished_cars = []
-        
-        # Calculate steps per interval based on time_interval_minutes
-        minutes_per_step = 1 / 60  # assuming 1 step = 1 second
-        self.steps_per_interval = int(self.flow_data.get("time_interval_minutes", 15) / minutes_per_step)
-        self.minimum_spawn_distance = float(self.flow_data.get("minimum_spawn_distance", 50.0))
-        
-        # Schedule initial spawns
-        self.schedule_spawns_for_interval(0)
+        self._last_spawn_route_idx = -1 # for round-robin spawning
 
         # GIF params (no heavy deps)
         self.record_gif = bool(p.get('record_gif', False))
@@ -157,28 +146,22 @@ class Model(ap.Model):
         self.gif_dpi = int(p.get('gif_dpi', 100))
         default_video_dir = os.path.join(os.getcwd(), "videos")
         os.makedirs(default_video_dir, exist_ok=True)
-        default_gif_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{self.t}_steps.gif"
+        default_gif_name = f"simulation_{datetime.now().strftime('%Y%m%d-%H%M%S')}.gif"
         self.gif_path = str(p.get('gif_path', os.path.join(default_video_dir, default_gif_name)))
 
         # Initialize Pillow GIF writer
-        if self.fig is None:
-            self.fig, self.ax = plt.subplots(figsize=(8, 8), squeeze=True)  # type: ignore
-            self.ax.set_aspect('equal')  # type: ignore
-            # no set_xlim / set_ylim and no step_text here
-        self._gif_writer = PillowWriter(fps=self.gif_fps)
-        self._gif_writer.setup(self.fig, self.gif_path, dpi=self.gif_dpi)
-        atexit.register(self._finalize_gif)
+        if self.record_gif and self.fig:
+            self._gif_writer = PillowWriter(fps=self.gif_fps)
+            self._gif_writer.setup(self.fig, self.gif_path, dpi=self.gif_dpi)
+            atexit.register(self._finalize_gif)
 
     def step(self):
-        # 0) Try to spawn any cars scheduled for this tick
-        for route_idx, spawn_times in self.car_spawn_queues.items():
-            while spawn_times and spawn_times[0] <= self.t:
-                if self.can_spawn_safely(route_idx):
-                    self.spawn_car(route_idx)         # must set new_car.spawn_step = self.t inside
-                    spawn_times.pop(0)
-                else:
-                    # Not safe yet; try again next step
-                    break
+        # 0) Simple fixed-rate spawning (round-robin)
+        if self.t > 0 and self.t % 10 == 0:
+            next_route_idx = (self._last_spawn_route_idx + 1) % len(self.routes)
+            if self.can_spawn_safely(next_route_idx):
+                self.spawn_car(next_route_idx)
+                self._last_spawn_route_idx = next_route_idx
 
         # --- PRE-MOVE collision pass: catch overlaps right at spawn ---
         self._compute_collision_flags()
@@ -199,22 +182,19 @@ class Model(ap.Model):
         # 3) Remove cars that have completed their routes
         self.remove_completed_cars()
 
-        # 4) Move to next demand interval if needed (may reschedule spawns)
-        self.check_new_interval()
-
-        # 5) Optional: offline JSON export frame
+        # 4) Optional: offline JSON export frame
         if self.offline_export:
             self._record_frame()
 
-        # 6) Capture frame for GIF
+        # 5) Capture frame for GIF
         if self.record_gif:
             self._capture_gif_frame()
 
-        # 7) Render sparsely
+        # 6) Render sparsely
         if self.render_every > 0 and (self.t % self.render_every == 0):
             self.plot()
 
-        # 8) Push state to any clients / logs
+        # 7) Push state to any clients / logs
         self.list_finished_cars.append(self.finished_cars)
         self.push_state()
 
@@ -252,49 +232,6 @@ class Model(ap.Model):
         self._draw_frame()
         self._gif_writer.grab_frame() # type: ignore
 
-    def load_flow_data(self, flow_path: str):
-        """Load traffic flow data from JSON file."""
-        try:
-            with open(flow_path, 'r') as f:
-                self.flow_data = json.load(f)
-            print(f"Successfully loaded flow data from {flow_path}")
-        except Exception as e:
-            print(f"Failed to load flow data: {e}")
-            # Create default flow data
-            self.flow_data = {
-                "routes": {f"route{i}": [3] * 8 for i in range(len(self.routes))},
-                "time_interval_minutes": 15,
-                "minimum_spawn_distance": 50,
-                "spawn_delay_seconds": 5
-            }
-            print("Using default flow data")
-    
-    def schedule_spawns_for_interval(self, interval_idx: int):
-        # Wrap around if we ran out of flow columns
-        periods = len(next(iter(self.flow_data["routes"].values())))
-        if periods == 0:
-            print("No flow data in routes"); return
-        idx = interval_idx % periods  # <-- wrap instead of returning
-        self.current_interval = interval_idx
-
-        # Clear and (re)schedule
-        for q in self.car_spawn_queues.values():
-            q.clear()
-
-        for route_idx, _route in enumerate(self.routes):
-            key = f"route{route_idx}"
-            if key in self.flow_data["routes"]:
-                cars = self.flow_data["routes"][key][idx]
-                if cars > 0:
-                    spawn_delay = self.flow_data.get("spawn_delay_seconds", 5)
-                    # Use max so spawn_delay is a MINIMUM gap
-                    steps_between_spawns = max(self.steps_per_interval // max(cars, 1), spawn_delay)
-                    for i in range(cars):
-                        jitter = random.randint(0, max(1, steps_between_spawns // 2))
-                        spawn_step = self.t + i * steps_between_spawns + jitter
-                        self.car_spawn_queues[route_idx].append(spawn_step)
-
-    
     def can_spawn_safely(self, route_idx: int) -> bool:
         """
         Check if it's safe to spawn a car by creating a 'ghost' box at s=0 and
